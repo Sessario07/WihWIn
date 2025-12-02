@@ -8,33 +8,32 @@
 #include <curl/curl.h>
 #include <stdbool.h>
 
-#define ADDRESS     "tcp:
+// ============== EC2 CLOUD CONFIGURATION ==============
+#define ADDRESS     "tcp://35.77.98.154:1883"
 #define CLIENTID    "SmartHelmetSim"
 #define DEVICE_ID   "HELMET001"
 #define QOS         1
 #define TIMEOUT     10000L
-#define ONBOARD_SAMPLES 12  
+#define ONBOARD_SAMPLES 12
 #define NORMAL_OPERATION_CYCLES 100
 
+// PPG Configuration
+#define PPG_SAMPLE_RATE 50
+#define PPG_BUFFER_SECONDS 5
+#define PPG_BUFFER_SIZE (PPG_SAMPLE_RATE * PPG_BUFFER_SECONDS)
 
-#define PPG_SAMPLE_RATE 50      
-#define PPG_BUFFER_SECONDS 5    
-#define PPG_BUFFER_SIZE (PPG_SAMPLE_RATE * PPG_BUFFER_SECONDS)  
-
-/
+// MQTT Authentication (must match EC2 mosquitto password)
 #define MQTT_USERNAME "helmet"
-#define MQTT_PASSWORD "wihwin123"
+#define MQTT_PASSWORD "WihWin_Mqtt_2024!Secure"
 
-
-#define FASTAPI_BASE_URL "http:
-
+// FastAPI URL (EC2)
+#define FASTAPI_BASE_URL "http://35.77.98.154/api/fast"
 
 char TOPIC_TELE[128];
 char TOPIC_CMD[128];
 char TOPIC_BASELINE[128];
 char TOPIC_ACCEL[128];
 
-\
 #define PI 3.14159265358979323846
 
 struct baseline_metrics {
@@ -52,13 +51,11 @@ bool has_baseline = false;
 int onboard_count = 0;
 int alert_flag = 0;
 
-
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     strncat((char *)userp, (char *)contents, realsize);
     return realsize;
 }
-
 
 void generate_ppg_signal(int *ppg_buffer, int size, double heart_rate, bool add_noise) {
     double samples_per_beat = (60.0 / heart_rate) * PPG_SAMPLE_RATE;
@@ -67,40 +64,32 @@ void generate_ppg_signal(int *ppg_buffer, int size, double heart_rate, bool add_
         double t = (double)i / PPG_SAMPLE_RATE;
         double phase = fmod(i, samples_per_beat) / samples_per_beat;
         
-        
         double systolic = exp(-pow((phase - 0.2) * 10, 2)) * 0.8;
         double dicrotic = exp(-pow((phase - 0.4) * 15, 2)) * 0.3;
         double baseline_wave = 0.1 * sin(2 * PI * 0.1 * t);  
         
         double signal = systolic + dicrotic + baseline_wave;
         
-        
         double hrv_noise = 0.02 * sin(2 * PI * 0.15 * t);
         signal += hrv_noise;
-        
         
         if (add_noise) {
             signal += ((rand() % 100) - 50) / 1000.0;
         }
         
-        
         ppg_buffer[i] = (int)(2048 + signal * 1500);
-        
         
         if (ppg_buffer[i] < 0) ppg_buffer[i] = 0;
         if (ppg_buffer[i] > 4095) ppg_buffer[i] = 4095;
     }
 }
 
-
 void generate_accel_data(double *accel_x, double *accel_y, double *accel_z, bool simulate_crash) {
     if (simulate_crash) {
-        
         *accel_x = ((rand() % 1000) - 500) / 50.0;  
         *accel_y = ((rand() % 1000) - 500) / 50.0;
         *accel_z = ((rand() % 500) / 50.0);  
     } else {
-        
         *accel_x = ((rand() % 200) - 100) / 100.0;  
         *accel_y = ((rand() % 200) - 100) / 100.0;
         *accel_z = 9.8 + ((rand() % 100) - 50) / 100.0;  
@@ -185,17 +174,13 @@ void publish_baseline_to_mqtt(MQTTClient client) {
            computed_baseline.sdnn, computed_baseline.rmssd, computed_baseline.pnn50);
 }
 
-
 char* build_telemetry_payload(const char *device_id, int *ppg_buffer, int ppg_size,
                                double lat, double lon) {
-    
-    
     char *payload = malloc(8192);
     
     sprintf(payload,
             "{\"device_id\":\"%s\",\"ppg\":[",
             device_id);
-    
     
     char value_str[16];
     for (int i = 0; i < ppg_size; i++) {
@@ -203,7 +188,6 @@ char* build_telemetry_payload(const char *device_id, int *ppg_buffer, int ppg_si
         sprintf(value_str, "%d", ppg_buffer[i]);
         strcat(payload, value_str);
     }
-    
     
     char suffix[256];
     sprintf(suffix,
@@ -213,7 +197,6 @@ char* build_telemetry_payload(const char *device_id, int *ppg_buffer, int ppg_si
     
     return payload;
 }
-
 
 char* build_accel_payload(const char *device_id, double accel_x, double accel_y, double accel_z,
                           double lat, double lon) {
@@ -233,7 +216,6 @@ int main() {
     
     srand(time(NULL));
 
-    
     sprintf(TOPIC_TELE, "helmet/%s/telemetry", DEVICE_ID);
     sprintf(TOPIC_CMD, "helmet/%s/command", DEVICE_ID);
     sprintf(TOPIC_BASELINE, "helmet/%s/baseline", DEVICE_ID);
@@ -246,7 +228,6 @@ int main() {
     printf("   Accel: 10 Hz (every 100ms)\n");
     printf("=================================================\n\n");
 
-    
     printf("Step 1: Checking device status\n");
     curl = curl_easy_init();
     if (curl) {
@@ -276,7 +257,6 @@ int main() {
         }
     }
 
-    
     printf("\nStep 2: Connecting to MQTT broker\n");
     MQTTClient client;
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -300,14 +280,12 @@ int main() {
     
     sleep(1);
 
-    
     if (has_baseline && !isOnboarding) {
         printf("\nStep 3: Publishing existing baseline to worker\n");
         publish_baseline_to_mqtt(client);
         printf("\n");
     }
 
-    
     if (isOnboarding) {
         printf("\n=================================================\n");
         printf("   ONBOARDING\n");
@@ -320,9 +298,7 @@ int main() {
             double lat = -6.2000 + ((rand() % 100) / 10000.0);
             double lon = 106.8167 + ((rand() % 100) / 10000.0);
             
-            
             generate_ppg_signal(ppg_buffer, PPG_BUFFER_SIZE, hr, true);
-            
             
             char *payload = build_telemetry_payload(DEVICE_ID, ppg_buffer, PPG_BUFFER_SIZE, lat, lon);
             
@@ -336,7 +312,6 @@ int main() {
             MQTTClient_waitForCompletion(client, token, TIMEOUT);
             
             free(payload);
-            
             
             for (int j = 0; j < 50; j++) {
                 double accel_x, accel_y, accel_z;
@@ -362,20 +337,17 @@ int main() {
                    onboard_count, ONBOARD_SAMPLES, progress, hr, PPG_BUFFER_SIZE);
         }
         
-        
         printf("\nONBOARDING DATA SENT\n\n");
         isOnboarding = false;
         sleep(2);
     }
 
-    
     printf("=================================================\n");
     printf("   NORMAL OPERATION - Real-time Monitoring\n");
     printf("   PPG: every 5s | Accel: every 100ms\n");
     printf("=================================================\n\n");
     
     for (int i = 0; i < NORMAL_OPERATION_CYCLES; i++) {
-        
         bool simulate_drowsy = (rand() % 10 == 0);  
         bool simulate_crash = (rand() % 50 == 0);   
         
@@ -388,7 +360,6 @@ int main() {
         
         double lat = -6.2000 + ((rand() % 100) / 10000.0);
         double lon = 106.8167 + ((rand() % 100) / 10000.0);
-        
         
         generate_ppg_signal(ppg_buffer, PPG_BUFFER_SIZE, hr, true);
         
@@ -407,8 +378,6 @@ int main() {
         
         printf("[%3d/%d] PPG sent (HR~%.0f) | GPS=(%.4f, %.4f)\n", 
                i+1, NORMAL_OPERATION_CYCLES, hr, lat, lon);
-        
-        
         
         int crash_at = simulate_crash ? (rand() % 50) : -1;
         
@@ -434,7 +403,6 @@ int main() {
                        accel_x, accel_y, accel_z);
             }
             
-            
             char *topicName = NULL;
             int topicLen;
             MQTTClient_message *message = NULL;
@@ -451,7 +419,6 @@ int main() {
         printf("%s\n\n", status);
     }
 
-   
     printf("   Simulation Complete - Shutting Down\n");
     
     MQTTClient_disconnect(client, 10000);
