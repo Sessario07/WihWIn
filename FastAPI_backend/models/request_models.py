@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 
 class BaselineSample(BaseModel):
     hr: float
@@ -10,7 +10,8 @@ class BaselineSample(BaseModel):
 
 class BaselineRequest(BaseModel):
     device_id: str
-    samples: List[BaselineSample]
+    samples: Union[List[BaselineSample], List[List[int]]]  # Accept either format
+    sample_rate: Optional[int] = 50  # PPG sample rate if sending raw PPG
 
 class CrashAlert(BaseModel):
     device_id: str

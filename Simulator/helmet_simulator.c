@@ -208,6 +208,71 @@ char* build_accel_payload(const char *device_id, double accel_x, double accel_y,
     return payload;
 }
 
+// Store onboarding samples for baseline computation
+int onboarding_samples[ONBOARD_SAMPLES][PPG_BUFFER_SIZE];
+int onboarding_sample_count = 0;
+
+void call_baseline_api(const char *device_id) {
+    CURL *curl;
+    CURLcode res;
+    char response[4096] = {0};
+    
+    printf("\nStep 3: Computing baseline via API...\n");
+    
+    // Build JSON payload with all onboarding samples
+    char *payload = malloc(ONBOARD_SAMPLES * PPG_BUFFER_SIZE * 10 + 1024);
+    sprintf(payload, "{\"device_id\":\"%s\",\"samples\":[", device_id);
+    
+    for (int i = 0; i < onboarding_sample_count; i++) {
+        if (i > 0) strcat(payload, ",");
+        strcat(payload, "[");
+        for (int j = 0; j < PPG_BUFFER_SIZE; j++) {
+            char val[16];
+            if (j > 0) strcat(payload, ",");
+            sprintf(val, "%d", onboarding_samples[i][j]);
+            strcat(payload, val);
+        }
+        strcat(payload, "]");
+    }
+    strcat(payload, "]}");
+    
+    curl = curl_easy_init();
+    if (curl) {
+        char url[256];
+        sprintf(url, "%s/baseline", FASTAPI_BASE_URL);
+        
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+        
+        res = curl_easy_perform(curl);
+        
+        if (res == CURLE_OK) {
+            printf("Baseline API response: %s\n", response);
+            
+            if (strstr(response, "\"success\":true") || strstr(response, "\"success\": true")) {
+                printf("✓ Baseline computed and saved successfully!\n");
+                has_baseline = true;
+                parse_baseline_from_response(response);
+            } else {
+                printf("✗ Baseline computation failed\n");
+            }
+        } else {
+            printf("✗ API call failed: %s\n", curl_easy_strerror(res));
+        }
+        
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+    
+    free(payload);
+}
+
 int main() {
     CURL *curl;
     CURLcode res;
@@ -293,12 +358,18 @@ int main() {
         
         printf("Starting telemetry stream\n\n");
         
+        onboarding_sample_count = 0;  // Reset counter
+        
         while (onboard_count < ONBOARD_SAMPLES) {
             double hr = 65 + rand() % 15;  
             double lat = -6.2000 + ((rand() % 100) / 10000.0);
             double lon = 106.8167 + ((rand() % 100) / 10000.0);
             
             generate_ppg_signal(ppg_buffer, PPG_BUFFER_SIZE, hr, true);
+            
+            // Store sample for baseline computation
+            memcpy(onboarding_samples[onboarding_sample_count], ppg_buffer, sizeof(int) * PPG_BUFFER_SIZE);
+            onboarding_sample_count++;
             
             char *payload = build_telemetry_payload(DEVICE_ID, ppg_buffer, PPG_BUFFER_SIZE, lat, lon);
             
@@ -337,7 +408,17 @@ int main() {
                    onboard_count, ONBOARD_SAMPLES, progress, hr, PPG_BUFFER_SIZE);
         }
         
-        printf("\nONBOARDING DATA SENT\n\n");
+        printf("\nONBOARDING DATA COLLECTED\n");
+        
+        // Call baseline API to compute and save baseline
+        call_baseline_api(DEVICE_ID);
+        
+        // Publish baseline to MQTT for worker
+        if (has_baseline) {
+            printf("\nStep 4: Publishing baseline to worker\n");
+            publish_baseline_to_mqtt(client);
+        }
+        
         isOnboarding = false;
         sleep(2);
     }

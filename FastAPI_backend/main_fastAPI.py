@@ -22,7 +22,11 @@ def check_device(device_id: str):
 
 @app.post("/baseline")
 def compute_baseline(request: BaselineRequest):
-    metrics = BaselineService.compute_baseline(request.device_id, request.samples)
+    metrics = BaselineService.compute_baseline(
+        request.device_id, 
+        request.samples,
+        request.sample_rate or 50
+    )
     return {
         "success": True,
         "message": "Baseline computed and stored successfully",
