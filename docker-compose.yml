@@ -1,0 +1,102 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - spring
+      - fastapi
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
+  fastapi:
+    build: ./FastAPI_backend
+    container_name: fastapi_app
+    expose:
+      - "8000"
+    environment:
+      DB_URL: ${DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-yesyes123}@db:5432/${POSTGRES_DB:-Wihwin}}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
+  spring:
+    build: ./Spring_Backend/wihwin
+    container_name: spring_backend
+    expose:
+      - "8080"
+    environment:
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/${POSTGRES_DB:-Wihwin}}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-yesyes123}
+      JWT_SECRET: ${JWT_SECRET:-wihwin-super-secret-key-change-this-in-production-at-least-512-bits-long}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
+    depends_on:
+      - db
+      - fastapi
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
+  worker:
+    build: ./Worker
+    container_name: helmet_worker
+    environment:
+      FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
+      MQTT_BROKER: ${MQTT_BROKER:-mqtt}
+      MQTT_USER: ${MQTT_USER:-helmet}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-wihwin123}
+    depends_on:
+      - fastapi
+      - mqtt
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yesyes123}
+      POSTGRES_DB: ${POSTGRES_DB:-Wihwin}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - wihwin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: mqtt_broker
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mqtt_password.txt:/mosquitto/config/password.txt
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
+networks:
+  wihwin-network:
+    driver: bridge
+
+volumes:
+  pgdata:

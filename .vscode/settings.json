@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "curl.h": "c",
+        "unistd.h": "c",
+        "stdbool.h": "c"
+    },
+    "java.compile.nullAnalysis.mode": "automatic"
+}
