@@ -4,19 +4,18 @@ import json
 import numpy as np
 import warnings
 import random
-
-# Suppress NeuroKit2 warnings
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-warnings.filterwarnings("ignore", message="Mean of empty slice")
-warnings.filterwarnings("ignore", message="invalid value encountered")
-warnings.filterwarnings("ignore", message="divide by zero")
-
+import math
 import neurokit2 as nk
 import requests
 from datetime import datetime, timedelta
 from collections import defaultdict
 import time
-import math
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message="Mean of empty slice")
+warnings.filterwarnings("ignore", message="invalid value encountered")
+warnings.filterwarnings("ignore", message="divide by zero")
+
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi:8000")
 MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt")
@@ -57,65 +56,90 @@ GENERAL_BASELINE = {
 
 
 def get_randomized_defaults():
-    """Generate randomized HRV values within normal healthy ranges"""
     return {
-        "hr": random.uniform(65, 80),           # Normal resting HR: 65-80 bpm
-        "sdnn": random.uniform(40, 60),         # Normal SDNN: 40-60 ms
-        "rmssd": random.uniform(35, 50),        # Normal RMSSD: 35-50 ms
-        "pnn50": random.uniform(15, 30),        # Normal pNN50: 15-30%
-        "lf_hf_ratio": random.uniform(1.0, 2.0),  # Normal LF/HF: 1.0-2.0
-        "sd1_sd2_ratio": random.uniform(0.4, 0.6)  # Normal SD1/SD2: 0.4-0.6
+        "hr": random.uniform(65, 80),           
+        "sdnn": random.uniform(40, 60),         
+        "rmssd": random.uniform(35, 50),        
+        "pnn50": random.uniform(15, 30),        
+        "lf_hf_ratio": random.uniform(1.0, 2.0),  
+        "sd1_sd2_ratio": random.uniform(0.4, 0.6)  
     }
+
+
+def is_valid_number(value):
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def process_ppg_signal(ppg_data, sample_rate=50):
     try:
-        
         ppg_array = np.array(ppg_data, dtype=float)
         signals, info = nk.ppg_process(ppg_array, sampling_rate=sample_rate)
         hr_values = signals["PPG_Rate"].dropna()
-        mean_hr = float(hr_values.mean()) if len(hr_values) > 0 else random.uniform(65, 80)
+        mean_hr = float(hr_values.mean()) if len(hr_values) > 0 else None
         
+        
+        if not is_valid_number(mean_hr):
+            mean_hr = None
         
         peaks = info.get("PPG_Peaks", [])
         
         if len(peaks) < 3:
-            print(f"Not enough peaks detected ({len(peaks)}), using randomized defaults")
-            defaults = get_randomized_defaults()
-            defaults["hr"] = mean_hr  # Keep extracted HR if available
-            return defaults
-        
+            print(f"Not enough peaks detected ({len(peaks)}), data is invalid")
+            return None  
         
         hrv_time = nk.hrv_time(peaks, sampling_rate=sample_rate)
         
         try:
             hrv_freq = nk.hrv_frequency(peaks, sampling_rate=sample_rate)
-            lf_hf = float(hrv_freq["HRV_LFHF"].iloc[0]) if "HRV_LFHF" in hrv_freq.columns else 1.5
+            lf_hf = float(hrv_freq["HRV_LFHF"].iloc[0]) if "HRV_LFHF" in hrv_freq.columns else None
         except:
-            lf_hf = 1.5
+            lf_hf = None
         
         try:
             hrv_nonlinear = nk.hrv_nonlinear(peaks, sampling_rate=sample_rate)
-            sd1 = float(hrv_nonlinear["HRV_SD1"].iloc[0]) if "HRV_SD1" in hrv_nonlinear.columns else 1.0
-            sd2 = float(hrv_nonlinear["HRV_SD2"].iloc[0]) if "HRV_SD2" in hrv_nonlinear.columns else 1.0
-            sd1_sd2 = sd1 / sd2 if sd2 != 0 else 0.5
+            sd1 = float(hrv_nonlinear["HRV_SD1"].iloc[0]) if "HRV_SD1" in hrv_nonlinear.columns else None
+            sd2 = float(hrv_nonlinear["HRV_SD2"].iloc[0]) if "HRV_SD2" in hrv_nonlinear.columns else None
+            sd1_sd2 = sd1 / sd2 if sd2 and sd2 != 0 else None
         except:
-            sd1_sd2 = 0.5
+            sd1_sd2 = None
         
-        return {
+        
+        raw_metrics = {
             "hr": mean_hr,
-            "sdnn": float(hrv_time["HRV_SDNN"].iloc[0]) if "HRV_SDNN" in hrv_time.columns else 50.0,
-            "rmssd": float(hrv_time["HRV_RMSSD"].iloc[0]) if "HRV_RMSSD" in hrv_time.columns else 40.0,
-            "pnn50": float(hrv_time["HRV_pNN50"].iloc[0]) if "HRV_pNN50" in hrv_time.columns else 20.0,
+            "sdnn": float(hrv_time["HRV_SDNN"].iloc[0]) if "HRV_SDNN" in hrv_time.columns else None,
+            "rmssd": float(hrv_time["HRV_RMSSD"].iloc[0]) if "HRV_RMSSD" in hrv_time.columns else None,
+            "pnn50": float(hrv_time["HRV_pNN50"].iloc[0]) if "HRV_pNN50" in hrv_time.columns else None,
             "lf_hf_ratio": lf_hf,
             "sd1_sd2_ratio": sd1_sd2
         }
         
+        
+        critical_keys = ["hr", "sdnn", "rmssd", "pnn50"]
+        all_valid = all(is_valid_number(raw_metrics.get(k)) for k in critical_keys)
+        
+        if not all_valid:
+            print(f"  [INVALID] Some HRV metrics are NaN/Inf, data will not be logged")
+            return None
+        
+        
+        sanitized = {}
+        for key, value in raw_metrics.items():
+            if is_valid_number(value):
+                sanitized[key] = float(value)
+            else:
+                
+                sanitized[key] = GENERAL_BASELINE.get(key, 1.0)
+        
+        return sanitized
+        
     except Exception as e:
         print(f"Error processing PPG signal: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        return None  
 
 
 def detect_crash(accel_x, accel_y, accel_z):
