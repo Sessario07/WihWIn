@@ -40,19 +40,19 @@ GENERAL_BASELINE = {
     "sd1_sd2_ratio": 0.5
 }
 
-def compute_hrv(ppg_data, hr):
+def compute_hrv(ppg_data, sampling_rate):
     """Compute HRV metrics using NeuroKit2"""
     try:
-        signals, info = nk.ppg_process(ppg_data, sampling_rate=50)
+        signals, info = nk.ppg_process(ppg_data, sampling_rate=sampling_rate)
         
         # Time-domain metrics
-        hrv_time = nk.hrv_time(info["PPG_Peaks"], sampling_rate=50)
+        hrv_time = nk.hrv_time(info["PPG_Peaks"], sampling_rate=sampling_rate)
         
         # Frequency-domain metrics
-        hrv_freq = nk.hrv_frequency(info["PPG_Peaks"], sampling_rate=50)
+        hrv_freq = nk.hrv_frequency(info["PPG_Peaks"], sampling_rate=sampling_rate)
         
         # Nonlinear metrics
-        hrv_nonlinear = nk.hrv_nonlinear(info["PPG_Peaks"], sampling_rate=50)
+        hrv_nonlinear = nk.hrv_nonlinear(info["PPG_Peaks"], sampling_rate=sampling_rate)
         
         return {
             "sdnn": float(hrv_time["HRV_SDNN"].iloc[0]) if "HRV_SDNN" in hrv_time.columns else 0.0,
@@ -226,13 +226,17 @@ def on_message_telemetry(client, userdata, msg):
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
-        hr = payload.get("hr")
-        ibi_ms = payload.get("ibi_ms")
-        accel_x = payload.get("accel_x")
-        accel_y = payload.get("accel_y")
-        accel_z = payload.get("accel_z")
+        
+        # Extract PPG data from simulator payload
+        ppg_data = payload.get("ppg")  # Raw PPG array from simulator
+        sample_rate = payload.get("sample_rate", 50)
         lat = payload.get("lat")
         lon = payload.get("lon")
+        
+        # If no PPG data, skip processing
+        if not ppg_data:
+            print(f"[{device_id}] ⚠️  No PPG data in payload, skipping...")
+            return
         
         # Get or create active ride
         ride_id = get_or_create_active_ride(device_id)
@@ -244,13 +248,32 @@ def on_message_telemetry(client, userdata, msg):
         if using_general:
             print(f"[{device_id}] ⚠️  Using general baseline (device not onboarded)")
         
-        # Simulate HRV computation
-        fake_ppg = nk.ppg_simulate(duration=5, heart_rate=hr)
-        hrv_metrics = compute_hrv(fake_ppg, hr)
+        # Process PPG data to extract HRV metrics and HR
+        hrv_metrics = compute_hrv(ppg_data, sample_rate)
         
         if hrv_metrics is None:
             print(f"[{device_id}] ❌ HRV computation failed, skipping...")
             return
+        
+        # Extract heart rate from PPG peaks
+        try:
+            signals, info = nk.ppg_process(ppg_data, sampling_rate=sample_rate)
+            peaks = info["PPG_Peaks"]
+            if len(peaks) > 1:
+                # Calculate HR from peak intervals
+                peak_intervals = []
+                for i in range(1, len(peaks)):
+                    interval = (peaks[i] - peaks[i-1]) / sample_rate  # in seconds
+                    peak_intervals.append(60.0 / interval)  # convert to BPM
+                hr = sum(peak_intervals) / len(peak_intervals)
+                ibi_ms = (60000.0 / hr)  # Inter-beat interval in ms
+            else:
+                hr = baseline.get("mean_hr", 70.0)
+                ibi_ms = 60000.0 / hr
+        except Exception as e:
+            print(f"[{device_id}] ⚠️  HR extraction failed, using baseline: {e}")
+            hr = baseline.get("mean_hr", 70.0)
+            ibi_ms = 60000.0 / hr
         
         # Add HR to metrics
         hrv_metrics["hr"] = hr
@@ -267,9 +290,9 @@ def on_message_telemetry(client, userdata, msg):
             "rmssd": hrv_metrics["rmssd"],
             "pnn50": hrv_metrics["pnn50"],
             "lf_hf_ratio": hrv_metrics["lf_hf_ratio"],
-            "accel_x": accel_x,
-            "accel_y": accel_y,
-            "accel_z": accel_z,
+            "accel_x": None,  # Accel sent separately
+            "accel_y": None,
+            "accel_z": None,
             "lat": lat,
             "lon": lon
         })
@@ -282,7 +305,7 @@ def on_message_telemetry(client, userdata, msg):
         if current_time - last_flush_time[device_id] >= FLUSH_INTERVAL_SECONDS:
             flush_telemetry_buffer(device_id)
         
-        print(f"\n[{device_id}] Received telemetry: HR={hr:.1f}, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
+        print(f"\n[{device_id}] Received telemetry: HR={hr:.1f} bpm, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
         print(f"[{device_id}] Drowsiness Score: {drowsiness_score}/11 | Status: {status_label}")
         print(f"  Current - SDNN: {hrv_metrics['sdnn']:.2f}, RMSSD: {hrv_metrics['rmssd']:.2f}, pNN50: {hrv_metrics['pnn50']:.2f}")
         print(f"  Baseline - SDNN: {baseline['sdnn']:.2f}, RMSSD: {baseline['rmssd']:.2f}, pNN50: {baseline['pnn50']:.2f}")
