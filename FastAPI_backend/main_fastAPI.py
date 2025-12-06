@@ -119,6 +119,46 @@ def log_drowsiness_event(event: DrowsinessEvent):
 
 #analytics yea
 
+@app.get("/users/{user_id}/baseline")
+def get_user_baseline(user_id: str):
+    """Get user's current baseline HRV metrics"""
+    from repositories.baseline_repository import BaselineRepository
+    
+    baseline = BaselineRepository.get_user_baseline_full(user_id)
+    if not baseline:
+        return {
+            "has_baseline": False,
+            "baseline": None
+        }
+    
+    return {
+        "has_baseline": True,
+        "baseline": {
+            "mean_hr": baseline.get('mean_hr'),
+            "sdnn": baseline.get('sdnn'),
+            "rmssd": baseline.get('rmssd'),
+            "pnn50": baseline.get('pnn50'),
+            "lf_hf_ratio": baseline.get('lf_hf_ratio'),
+            "computed_at": baseline.get('computed_at').isoformat() if baseline.get('computed_at') else None
+        }
+    }
+
+
+@app.delete("/users/{user_id}/baseline")
+def delete_user_baseline(user_id: str):
+    """Delete user's baseline metrics"""
+    from repositories.baseline_repository import BaselineRepository
+    
+    deleted = BaselineRepository.delete_user_baseline(user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No baseline found for this user")
+    
+    return {
+        "success": True,
+        "message": "Baseline deleted successfully"
+    }
+
+
 @app.get("/users/{user_id}/daily-hrv-trend")
 def get_daily_hrv_trend(user_id: str, days: int = 30):
     """Feature 1: Daily RMSSD line chart with baseline and 7-day moving average"""

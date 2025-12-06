@@ -1,21 +1,11 @@
 import os
 import paho.mqtt.client as mqtt
 import json
-import numpy as np
-import warnings
-import random
-import math
 import neurokit2 as nk
 import requests
 from datetime import datetime, timedelta
 from collections import defaultdict
 import time
-
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-warnings.filterwarnings("ignore", message="Mean of empty slice")
-warnings.filterwarnings("ignore", message="invalid value encountered")
-warnings.filterwarnings("ignore", message="divide by zero")
-
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi:8000")
 MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt")
@@ -23,28 +13,24 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "helmet")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "wihwin123")
 
+# Subscribe to all device topics
 TOPIC_TELEMETRY = "helmet/+/telemetry"
 TOPIC_BASELINE = "helmet/+/baseline"
-TOPIC_ACCEL = "helmet/+/accel"
 
-
+# Baseline cache: device_id -> baseline_metrics
 baseline_cache = {}
 
-
+# Telemetry buffer: device_id -> list of telemetry entries
 telemetry_buffer = defaultdict(list)
 last_flush_time = {}
 
-
+# Active ride tracking: device_id -> ride_id
 active_rides = {}
 
+# Flush telemetry to database every 10 minutes
+FLUSH_INTERVAL_SECONDS = 600  # 10 minutes
 
-FLUSH_INTERVAL_SECONDS = 600  
-
-
-CRASH_G_THRESHOLD = 4.0  
-CRASH_VECTOR_THRESHOLD = 6.0  
-
-
+# General baseline for devices without personalized baseline
 GENERAL_BASELINE = {
     "mean_hr": 70.0,
     "sdnn": 50.0,
@@ -54,187 +40,68 @@ GENERAL_BASELINE = {
     "sd1_sd2_ratio": 0.5
 }
 
-
-def get_randomized_defaults():
-    return {
-        "hr": random.uniform(65, 80),           
-        "sdnn": random.uniform(40, 60),         
-        "rmssd": random.uniform(35, 50),        
-        "pnn50": random.uniform(15, 30),        
-        "lf_hf_ratio": random.uniform(1.0, 2.0),  
-        "sd1_sd2_ratio": random.uniform(0.4, 0.6)  
-    }
-
-
-def is_valid_number(value):
-    if value is None:
-        return False
+def compute_hrv(ppg_data, hr):
+    """Compute HRV metrics using NeuroKit2"""
     try:
-        return math.isfinite(float(value))
-    except (TypeError, ValueError):
-        return False
-
-
-def process_ppg_signal(ppg_data, sample_rate=50):
-    try:
-        ppg_array = np.array(ppg_data, dtype=float)
-        signals, info = nk.ppg_process(ppg_array, sampling_rate=sample_rate)
-        hr_values = signals["PPG_Rate"].dropna()
-        mean_hr = float(hr_values.mean()) if len(hr_values) > 0 else None
+        signals, info = nk.ppg_process(ppg_data, sampling_rate=50)
         
+        # Time-domain metrics
+        hrv_time = nk.hrv_time(info["PPG_Peaks"], sampling_rate=50)
         
-        if not is_valid_number(mean_hr):
-            mean_hr = None
+        # Frequency-domain metrics
+        hrv_freq = nk.hrv_frequency(info["PPG_Peaks"], sampling_rate=50)
         
-        peaks = info.get("PPG_Peaks", [])
+        # Nonlinear metrics
+        hrv_nonlinear = nk.hrv_nonlinear(info["PPG_Peaks"], sampling_rate=50)
         
-        if len(peaks) < 3:
-            print(f"Not enough peaks detected ({len(peaks)}), data is invalid")
-            return None  
-        
-        hrv_time = nk.hrv_time(peaks, sampling_rate=sample_rate)
-        
-        try:
-            hrv_freq = nk.hrv_frequency(peaks, sampling_rate=sample_rate)
-            lf_hf = float(hrv_freq["HRV_LFHF"].iloc[0]) if "HRV_LFHF" in hrv_freq.columns else None
-        except:
-            lf_hf = None
-        
-        try:
-            hrv_nonlinear = nk.hrv_nonlinear(peaks, sampling_rate=sample_rate)
-            sd1 = float(hrv_nonlinear["HRV_SD1"].iloc[0]) if "HRV_SD1" in hrv_nonlinear.columns else None
-            sd2 = float(hrv_nonlinear["HRV_SD2"].iloc[0]) if "HRV_SD2" in hrv_nonlinear.columns else None
-            sd1_sd2 = sd1 / sd2 if sd2 and sd2 != 0 else None
-        except:
-            sd1_sd2 = None
-        
-        
-        raw_metrics = {
-            "hr": mean_hr,
-            "sdnn": float(hrv_time["HRV_SDNN"].iloc[0]) if "HRV_SDNN" in hrv_time.columns else None,
-            "rmssd": float(hrv_time["HRV_RMSSD"].iloc[0]) if "HRV_RMSSD" in hrv_time.columns else None,
-            "pnn50": float(hrv_time["HRV_pNN50"].iloc[0]) if "HRV_pNN50" in hrv_time.columns else None,
-            "lf_hf_ratio": lf_hf,
-            "sd1_sd2_ratio": sd1_sd2
+        return {
+            "sdnn": float(hrv_time["HRV_SDNN"].iloc[0]) if "HRV_SDNN" in hrv_time.columns else 0.0,
+            "rmssd": float(hrv_time["HRV_RMSSD"].iloc[0]) if "HRV_RMSSD" in hrv_time.columns else 0.0,
+            "pnn50": float(hrv_time["HRV_pNN50"].iloc[0]) if "HRV_pNN50" in hrv_time.columns else 0.0,
+            "lf_hf_ratio": float(hrv_freq["HRV_LFHF"].iloc[0]) if "HRV_LFHF" in hrv_freq.columns else 0.0,
+            "sd1_sd2_ratio": float(hrv_nonlinear["HRV_SD1"].iloc[0] / hrv_nonlinear["HRV_SD2"].iloc[0]) 
+                           if "HRV_SD1" in hrv_nonlinear.columns and "HRV_SD2" in hrv_nonlinear.columns 
+                           and hrv_nonlinear["HRV_SD2"].iloc[0] != 0 else 0.0
         }
-        
-        
-        critical_keys = ["hr", "sdnn", "rmssd", "pnn50"]
-        all_valid = all(is_valid_number(raw_metrics.get(k)) for k in critical_keys)
-        
-        if not all_valid:
-            print(f"  [INVALID] Some HRV metrics are NaN/Inf, data will not be logged")
-            return None
-        
-        
-        sanitized = {}
-        for key, value in raw_metrics.items():
-            if is_valid_number(value):
-                sanitized[key] = float(value)
-            else:
-                
-                sanitized[key] = GENERAL_BASELINE.get(key, 1.0)
-        
-        return sanitized
-        
     except Exception as e:
-        print(f"Error processing PPG signal: {e}")
-        return None  
-
-
-def detect_crash(accel_x, accel_y, accel_z):
-    accel_magnitude = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
-    max_axis = max(abs(accel_x), abs(accel_y), abs(accel_z - 9.8))  
-    
-    
-    is_crash = False
-    severity = "none"
-    details = {}
-    
-    if max_axis > CRASH_G_THRESHOLD or accel_magnitude > CRASH_VECTOR_THRESHOLD + 9.8:
-        is_crash = True
-        
-        
-        if max_axis > 8.0 or accel_magnitude > 15.0:
-            severity = "severe"
-        elif max_axis > 6.0 or accel_magnitude > 12.0:
-            severity = "moderate"
-        else:
-            severity = "mild"
-        
-        details = {
-            "accel_x": accel_x,
-            "accel_y": accel_y,
-            "accel_z": accel_z,
-            "magnitude": accel_magnitude,
-            "max_axis_deviation": max_axis
-        }
-    
-    return is_crash, severity, details
-
-
-def notify_hospital_crash(device_id, lat, lon, severity, accel_details):
-    try:
-        response = requests.post(
-            f"{FASTAPI_URL}/crash",
-            json={
-                "device_id": device_id,
-                "lat": lat,
-                "lon": lon,
-                "severity": severity,
-                "accel_magnitude": accel_details.get("magnitude"),
-                "accel_x": accel_details.get("accel_x"),
-                "accel_y": accel_details.get("accel_y"),
-                "accel_z": accel_details.get("accel_z")
-            },
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"[CRASH] Hospital notified: {result.get('hospital_name')}")
-            print(f"[CRASH]  Distance: {result.get('distance_km', 'N/A')} km")
-            return result
-        else:
-            print(f"[CRASH] Failed to notify hospital: {response.status_code}")
-            return None
-            
-    except Exception as e:
-        print(f"[CRASH] Error notifying hospital: {e}")
+        print(f"HRV computation error: {e}")
         return None
 
-
 def assess_drowsiness(current_metrics, baseline_metrics):
+    """
+    Multi-metric drowsiness assessment
+    Returns: (should_alert, drowsiness_score, status_label, alerts)
+    """
     drowsiness_score = 0
     alerts = []
     
-    
+    # 1. SDNN Check (weight: 3)
     if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.80:
         drowsiness_score += 3
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
     
-    
+    # 2. RMSSD Check (weight: 3)
     if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.75:
         drowsiness_score += 3
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     
-    
+    # 3. pNN50 Check (weight: 2)
     if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.70:
         drowsiness_score += 2
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
     
-    
+    # 4. LF/HF Ratio Check (weight: 2)
     if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.3:
         drowsiness_score += 2
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
     
-    
+    # 5. SD1/SD2 Ratio Check (weight: 1)
     ratio_diff = abs(current_metrics["sd1_sd2_ratio"] - baseline_metrics["sd1_sd2_ratio"])
     if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.3:
         drowsiness_score += 1
         alerts.append(f"SD1/SD2 ratio deviated by {(ratio_diff / baseline_metrics['sd1_sd2_ratio'] * 100):.1f}%")
     
-    
+    # Determine status label
     if drowsiness_score >= 8:
         status_label = "MICROSLEEP"
         should_alert = True
@@ -247,12 +114,13 @@ def assess_drowsiness(current_metrics, baseline_metrics):
     
     return should_alert, drowsiness_score, status_label, alerts
 
-
 def get_or_create_active_ride(device_id):
+    """Get active ride ID or create a new one"""
     if device_id in active_rides:
         return active_rides[device_id]
     
     try:
+        # Call FastAPI to start a new ride
         response = requests.post(
             f"{FASTAPI_URL}/rides/start",
             json={"device_id": device_id},
@@ -262,15 +130,15 @@ def get_or_create_active_ride(device_id):
         if response.status_code == 200:
             ride_id = response.json().get("ride_id")
             active_rides[device_id] = ride_id
-            print(f"[RIDE] Started new ride {ride_id} for device {device_id}")
+            print(f"[RIDE] ✓ Started new ride {ride_id} for device {device_id}")
             return ride_id
     except Exception as e:
-        print(f"Error starting ride: {e}")
+        print(f"[RIDE] ❌ Error starting ride: {e}")
     
     return None
 
-
 def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon):
+    """Log drowsiness event to database"""
     try:
         requests.post(
             f"{FASTAPI_URL}/drowsiness-events",
@@ -290,11 +158,10 @@ def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv
             timeout=5
         )
     except Exception as e:
-        print(f"Error logging drowsiness: {e}")
-
+        print(f"[EVENT] ❌ Error logging drowsiness event: {e}")
 
 def flush_telemetry_buffer(device_id):
-   
+    """Send buffered telemetry to FastAPI for database storage"""
     if device_id not in telemetry_buffer or len(telemetry_buffer[device_id]) == 0:
         return
     
@@ -315,24 +182,25 @@ def flush_telemetry_buffer(device_id):
         
         if response.status_code == 200:
             count = len(telemetry_buffer[device_id])
-            print(f"[BATCH] Flushed {count} telemetry records for {device_id} to database")
+            print(f"[BATCH] ✓ Flushed {count} telemetry records for {device_id} to database")
             telemetry_buffer[device_id].clear()
             last_flush_time[device_id] = time.time()
         else:
-            print(f"[BATCH] Failed to flush telemetry: {response.status_code}")
+            print(f"[BATCH] ❌ Failed to flush telemetry: {response.status_code}")
             
     except Exception as e:
-        print(f"[BATCH] Error flushing telemetry: {e}")
-
+        print(f"[BATCH] ❌ Error flushing telemetry: {e}")
 
 def on_message_baseline(client, userdata, msg):
-   
+    """Handle baseline messages from devices"""
     try:
+        # Extract device_id from topic: helmet/<deviceID>/baseline
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
         
+        # Cache the baseline
         baseline_cache[device_id] = {
             "mean_hr": payload.get("mean_hr"),
             "sdnn": payload.get("sdnn"),
@@ -342,111 +210,55 @@ def on_message_baseline(client, userdata, msg):
             "sd1_sd2_ratio": payload.get("sd1_sd2_ratio")
         }
         
-        print(f"\n[BASELINE] Cached baseline for device {device_id}")
+        print(f"\n[BASELINE] ✓ Cached baseline for device {device_id}")
         print(f"  SDNN: {baseline_cache[device_id]['sdnn']:.2f}, RMSSD: {baseline_cache[device_id]['rmssd']:.2f}")
         
     except Exception as e:
-        print(f"[BASELINE] Error processing baseline: {e}")
+        print(f"[BASELINE] ❌ Error processing baseline: {e}")
         import traceback
         traceback.print_exc()
 
-
-def on_message_accel(client, userdata, msg):
-    try:
-        topic_parts = msg.topic.split('/')
-        device_id = topic_parts[1]
-        
-        payload = json.loads(msg.payload.decode())
-        
-        accel_x = payload.get("accel_x", 0)
-        accel_y = payload.get("accel_y", 0)
-        accel_z = payload.get("accel_z", 9.8)
-        lat = payload.get("lat")
-        lon = payload.get("lon")
-        
-        
-        is_crash, crash_severity, crash_details = detect_crash(accel_x, accel_y, accel_z)
-        
-        if is_crash:
-            print(f"\n[{device_id}] CRASH DETECTED! Severity: {crash_severity.upper()}")
-            print(f"  Accel: X={accel_x:.2f}G, Y={accel_y:.2f}G, Z={accel_z:.2f}G")
-            print(f"  Magnitude: {crash_details['magnitude']:.2f}G")
-            
-            
-            hospital_result = notify_hospital_crash(device_id, lat, lon, crash_severity, crash_details)
-            
-            
-            cmd_topic = f"helmet/{device_id}/command"
-            crash_command = {
-                "crash_detected": True,
-                "severity": crash_severity,
-                "hospital_notified": hospital_result is not None,
-                "hospital_name": hospital_result.get("hospital_name") if hospital_result else None
-            }
-            client.publish(cmd_topic, json.dumps(crash_command), qos=1)
-            
-            
-            crash_topic = f"helmet/{device_id}/crash"
-            client.publish(crash_topic, json.dumps({
-                "device_id": device_id,
-                "timestamp": datetime.now().isoformat(),
-                "severity": crash_severity,
-                "location": {"lat": lat, "lon": lon},
-                "accel": crash_details,
-                "hospital": hospital_result
-            }), qos=1)
-        
-    except Exception as e:
-        print(f"[ACCEL] Error processing accelerometer data: {e}")
-
-
 def on_message_telemetry(client, userdata, msg):
-
+    """Handle telemetry messages from devices"""
     try:
+        # Extract device_id from topic: helmet/<deviceID>/telemetry
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
-        
-        
-        ppg_data = payload.get("ppg", [])
-        sample_rate = payload.get("sample_rate", 50)
+        hr = payload.get("hr")
+        ibi_ms = payload.get("ibi_ms")
+        accel_x = payload.get("accel_x")
+        accel_y = payload.get("accel_y")
+        accel_z = payload.get("accel_z")
         lat = payload.get("lat")
         lon = payload.get("lon")
         
-        print(f"\n[{device_id}] Received PPG telemetry: {len(ppg_data)} samples @ {sample_rate}Hz")
-        
-        
-        if len(ppg_data) < 50:
-            print(f"[{device_id}] Not enough PPG samples ({len(ppg_data)})")
-            return
-        
-        
-        hrv_metrics = process_ppg_signal(ppg_data, sample_rate)
-        
-        if hrv_metrics is None:
-            print(f"[{device_id}] PPG processing failed, skipping...")
-            return
-        
-        hr = hrv_metrics["hr"]
-        ibi_ms = 60000.0 / hr if hr > 0 else 0
-        
-        print(f"[{device_id}] Extracted: HR={hr:.1f} bpm, SDNN={hrv_metrics['sdnn']:.2f}, RMSSD={hrv_metrics['rmssd']:.2f}")
-        
-        
+        # Get or create active ride
         ride_id = get_or_create_active_ride(device_id)
         
-        
+        # Get baseline (from cache or use general)
         baseline = baseline_cache.get(device_id, GENERAL_BASELINE)
         using_general = device_id not in baseline_cache
         
         if using_general:
-            print(f"[{device_id}] Using general baseline (device not onboarded)")
+            print(f"[{device_id}] ⚠️  Using general baseline (device not onboarded)")
         
+        # Simulate HRV computation
+        fake_ppg = nk.ppg_simulate(duration=5, heart_rate=hr)
+        hrv_metrics = compute_hrv(fake_ppg, hr)
         
+        if hrv_metrics is None:
+            print(f"[{device_id}] ❌ HRV computation failed, skipping...")
+            return
+        
+        # Add HR to metrics
+        hrv_metrics["hr"] = hr
+        
+        # Assess drowsiness
         should_alert, drowsiness_score, status_label, alerts = assess_drowsiness(hrv_metrics, baseline)
         
-        
+        # Buffer telemetry with computed HRV metrics for batch upload
         telemetry_buffer[device_id].append({
             "timestamp": datetime.now().isoformat(),
             "hr": hr,
@@ -455,11 +267,14 @@ def on_message_telemetry(client, userdata, msg):
             "rmssd": hrv_metrics["rmssd"],
             "pnn50": hrv_metrics["pnn50"],
             "lf_hf_ratio": hrv_metrics["lf_hf_ratio"],
+            "accel_x": accel_x,
+            "accel_y": accel_y,
+            "accel_z": accel_z,
             "lat": lat,
             "lon": lon
         })
         
-        
+        # Check if we need to flush the buffer
         current_time = time.time()
         if device_id not in last_flush_time:
             last_flush_time[device_id] = current_time
@@ -467,22 +282,23 @@ def on_message_telemetry(client, userdata, msg):
         if current_time - last_flush_time[device_id] >= FLUSH_INTERVAL_SECONDS:
             flush_telemetry_buffer(device_id)
         
+        print(f"\n[{device_id}] Received telemetry: HR={hr:.1f}, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
         print(f"[{device_id}] Drowsiness Score: {drowsiness_score}/11 | Status: {status_label}")
-        print(f"  Current  - SDNN: {hrv_metrics['sdnn']:.2f}, RMSSD: {hrv_metrics['rmssd']:.2f}, pNN50: {hrv_metrics['pnn50']:.2f}")
+        print(f"  Current - SDNN: {hrv_metrics['sdnn']:.2f}, RMSSD: {hrv_metrics['rmssd']:.2f}, pNN50: {hrv_metrics['pnn50']:.2f}")
         print(f"  Baseline - SDNN: {baseline['sdnn']:.2f}, RMSSD: {baseline['rmssd']:.2f}, pNN50: {baseline['pnn50']:.2f}")
         
         if should_alert:
-            print(f"{status_label} DETECTED:")
+            print(f"  🚨 {status_label} DETECTED:")
             for alert in alerts:
                 print(f"     - {alert}")
         else:
-            print(f"Normal state")
+            print(f"  ✅ Normal state")
         
-        
+        # Log drowsiness event if not AWAKE
         if status_label != "AWAKE" and ride_id:
             log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon)
         
-        
+        # 🆕 Publish live analysis to mobile app topic
         live_analysis_topic = f"helmet/{device_id}/live-analysis"
         live_analysis_payload = {
             "device_id": device_id,
@@ -504,54 +320,50 @@ def on_message_telemetry(client, userdata, msg):
         client.publish(live_analysis_topic, json.dumps(live_analysis_payload), qos=1)
         print(f"[MQTT] 📱 Published live analysis to {live_analysis_topic}")
         
-        
+        # Send command back to helmet
         cmd_topic = f"helmet/{device_id}/command"
-        command_payload = {"vibrate": should_alert, "crash_detected": False}
+        command_payload = {"vibrate": should_alert}
         client.publish(cmd_topic, json.dumps(command_payload), qos=1)
         
     except Exception as e:
-        print(f"[TELEMETRY] Error processing telemetry: {e}")
+        print(f"[TELEMETRY] ❌ Error processing telemetry: {e}")
         import traceback
         traceback.print_exc()
-
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"Connected to MQTT broker with result code {reason_code}")
     
     client.subscribe(TOPIC_TELEMETRY)
     client.subscribe(TOPIC_BASELINE)
-    client.subscribe(TOPIC_ACCEL)
     
+    # Set up message callbacks using message filters
     client.message_callback_add("helmet/+/telemetry", on_message_telemetry)
     client.message_callback_add("helmet/+/baseline", on_message_baseline)
-    client.message_callback_add("helmet/+/accel", on_message_accel)
     
     print(f"\n✓ Worker subscribed to:")
-    print(f"  - {TOPIC_TELEMETRY} (PPG data, every 5s)")
-    print(f"  - {TOPIC_BASELINE} (baseline metrics)")
-    print(f"  - {TOPIC_ACCEL} (accelerometer, every 100ms)")
-    print(f"\n Telemetry Processing:")
-    print(f"  - Input: PPG array (integers) @ configurable sample rate")
-    print(f"  - Output: HR, SDNN, RMSSD, pNN50, LF/HF ratio")
+    print(f"  - {TOPIC_TELEMETRY}")
+    print(f"  - {TOPIC_BASELINE}")
+    print(f"\n📊 Telemetry buffering:")
     print(f"  - Flush interval: {FLUSH_INTERVAL_SECONDS}s ({FLUSH_INTERVAL_SECONDS/60:.0f} minutes)")
-    print(f"\n Crash Detection (from accel topic):")
-    print(f"  - G-force threshold: {CRASH_G_THRESHOLD}G (single axis)")
-    print(f"  - Vector magnitude threshold: {CRASH_VECTOR_THRESHOLD}G")
-    print(f"  - On crash: Notify nearest hospital via FastAPI")
-    print(f"\n Mobile App Topics:")
-    print(f"  - helmet/<deviceID>/live-analysis (HRV + drowsiness)")
-    print(f"  - helmet/<deviceID>/crash (crash events)")
-    print(f"\n Drowsiness Detection (from telemetry topic):")
-    print(f"  - AWAKE: Score < 5")
-    print(f"  - DROWSY: Score 5-7")
-    print(f"  - MICROSLEEP: Score >= 8")
-    print(f"\n General Baseline (fallback):")
+    print(f"\n📱 Mobile App Live Stream:")
+    print(f"  - Publishing to: helmet/<deviceID>/live-analysis")
+    print(f"  - Includes: status (AWAKE/DROWSY/MICROSLEEP) + HRV metrics + location")
+    print(f"\n🧠 Drowsiness Detection:")
+    print(f"  - SDNN: Overall HRV (weight: 3)")
+    print(f"  - RMSSD: Parasympathetic activity (weight: 3)")
+    print(f"  - pNN50: Beat-to-beat variation (weight: 2)")
+    print(f"  - LF/HF Ratio: Autonomic balance (weight: 2)")
+    print(f"  - SD1/SD2 Ratio: Poincaré analysis (weight: 1)")
+    print(f"  - Status Labels:")
+    print(f"    * AWAKE: Score < 5")
+    print(f"    * DROWSY: Score 5-7")
+    print(f"    * MICROSLEEP: Score >= 8")
+    print(f"\n💾 General Baseline (fallback):")
     print(f"  - SDNN: {GENERAL_BASELINE['sdnn']}, RMSSD: {GENERAL_BASELINE['rmssd']}, pNN50: {GENERAL_BASELINE['pnn50']}\n")
 
-
-
+# Set up MQTT client
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+client.username_pw_set(MQTT_USER, MQTT_PASSWORD)  # Add authentication
 client.on_connect = on_connect
 
 print("Connecting to MQTT broker...")

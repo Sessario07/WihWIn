@@ -58,3 +58,35 @@ class BaselineRepository:
             
             result = cur.fetchone()
             return dict(result) if result else None
+    
+    @staticmethod
+    def get_user_baseline_full(user_id: str) -> Optional[Dict]:
+        """Get full baseline metrics for a user"""
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT bm.mean_hr, bm.sdnn, bm.rmssd, bm.pnn50, 
+                       bm.lf_hf_ratio, bm.sd1_sd2_ratio, bm.computed_at
+                FROM baseline_metrics bm
+                JOIN devices d ON d.id = bm.device_id
+                WHERE d.user_id = %s
+                ORDER BY bm.computed_at DESC
+                LIMIT 1
+            """, (user_id,))
+            
+            result = cur.fetchone()
+            return dict(result) if result else None
+    
+    @staticmethod
+    def delete_user_baseline(user_id: str) -> bool:
+        """Delete all baseline metrics for a user"""
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM baseline_metrics
+                WHERE device_id IN (
+                    SELECT id FROM devices WHERE user_id = %s
+                )
+            """, (user_id,))
+            deleted_count = cur.rowcount
+            return deleted_count > 0
