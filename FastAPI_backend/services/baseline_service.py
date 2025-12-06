@@ -23,9 +23,13 @@ class BaselineService:
             print(f"\n🧮 Computing baseline for device {device_id}")
             print(f"   Received {len(samples)} PPG samples at {sample_rate} Hz")
             
-            # Process each PPG sample to extract HRV metrics
-            all_peaks = []
+            # Collect HRV metrics from each sample
             hr_values = []
+            sdnn_values = []
+            rmssd_values = []
+            pnn50_values = []
+            lf_hf_values = []
+            sd1_sd2_values = []
             
             for i, ppg_data in enumerate(samples):
                 try:
@@ -33,52 +37,68 @@ class BaselineService:
                     signals, info = nk.ppg_process(ppg_data, sampling_rate=sample_rate)
                     peaks = info["PPG_Peaks"]
                     
+                    if len(peaks) < 2:
+                        print(f"   ⚠ Warning: Sample {i+1} has insufficient peaks, skipping...")
+                        continue
+                    
                     # Calculate HR from this sample
-                    if len(peaks) > 1:
-                        peak_intervals = []
-                        for j in range(1, len(peaks)):
-                            interval = (peaks[j] - peaks[j-1]) / sample_rate  # in seconds
-                            peak_intervals.append(60.0 / interval)  # convert to BPM
+                    peak_intervals = []
+                    for j in range(1, len(peaks)):
+                        interval = (peaks[j] - peaks[j-1]) / sample_rate  # in seconds
+                        peak_intervals.append(60.0 / interval)  # convert to BPM
+                    
+                    if peak_intervals:
                         hr = sum(peak_intervals) / len(peak_intervals)
                         hr_values.append(hr)
                     
-                    # Accumulate all peaks for overall HRV computation
-                    all_peaks.extend(peaks)
+                    # Compute HRV metrics for this sample
+                    try:
+                        hrv_time = nk.hrv_time(peaks, sampling_rate=sample_rate, show=False)
+                        if 'HRV_SDNN' in hrv_time.columns:
+                            sdnn_values.append(safe_float(hrv_time['HRV_SDNN'].iloc[0], 50.0))
+                        if 'HRV_RMSSD' in hrv_time.columns:
+                            rmssd_values.append(safe_float(hrv_time['HRV_RMSSD'].iloc[0], 40.0))
+                        if 'HRV_pNN50' in hrv_time.columns:
+                            pnn50_values.append(safe_float(hrv_time['HRV_pNN50'].iloc[0], 20.0))
+                    except Exception as e:
+                        print(f"   ⚠ Warning: Time domain computation failed for sample {i+1}: {e}")
+                    
+                    # Frequency domain
+                    try:
+                        hrv_freq = nk.hrv_frequency(peaks, sampling_rate=sample_rate, show=False)
+                        if 'HRV_LFHF' in hrv_freq.columns:
+                            lf_hf_values.append(safe_float(hrv_freq['HRV_LFHF'].iloc[0], 1.5))
+                    except Exception as e:
+                        print(f"   ⚠ Warning: Frequency domain failed for sample {i+1}: {e}")
+                    
+                    # Nonlinear domain
+                    try:
+                        hrv_nonlinear = nk.hrv_nonlinear(peaks, sampling_rate=sample_rate, show=False)
+                        if 'HRV_SD1' in hrv_nonlinear.columns and 'HRV_SD2' in hrv_nonlinear.columns:
+                            sd1 = safe_float(hrv_nonlinear['HRV_SD1'].iloc[0], 30.0)
+                            sd2 = safe_float(hrv_nonlinear['HRV_SD2'].iloc[0], 60.0)
+                            if sd2 != 0:
+                                sd1_sd2_values.append(sd1 / sd2)
+                    except Exception as e:
+                        print(f"   ⚠ Warning: Nonlinear domain failed for sample {i+1}: {e}")
                     
                 except Exception as e:
                     print(f"   ⚠ Warning: Failed to process sample {i+1}: {e}")
                     continue
             
-            if len(all_peaks) < 2:
-                raise HTTPException(status_code=400, detail="Insufficient PPG data to compute baseline")
+            # Check if we have enough valid samples
+            if len(hr_values) < 3:
+                raise HTTPException(status_code=400, detail="Insufficient valid PPG samples to compute baseline")
             
-            print(f"   ✓ Found {len(all_peaks)} total peaks from {len(samples)} samples")
+            print(f"   ✓ Successfully processed {len(hr_values)} out of {len(samples)} samples")
             
-            # Compute HRV metrics from all peaks
-            hrv_metrics = nk.hrv_time(all_peaks, sampling_rate=sample_rate, show=False)
-            
-            mean_hr = safe_float(np.mean(hr_values), 70.0) if hr_values else 70.0
-            sdnn = safe_float(hrv_metrics['HRV_SDNN'].iloc[0], 50.0) if 'HRV_SDNN' in hrv_metrics.columns else 50.0
-            rmssd = safe_float(hrv_metrics['HRV_RMSSD'].iloc[0], 40.0) if 'HRV_RMSSD' in hrv_metrics.columns else 40.0
-            pnn50 = safe_float(hrv_metrics['HRV_pNN50'].iloc[0], 20.0) if 'HRV_pNN50' in hrv_metrics.columns else 20.0
-            
-            # Frequency domain
-            try:
-                hrv_freq = nk.hrv_frequency(all_peaks, sampling_rate=sample_rate, show=False)
-                lf_hf_ratio = safe_float(hrv_freq['HRV_LFHF'].iloc[0], 1.5) if 'HRV_LFHF' in hrv_freq.columns else 1.5
-            except Exception as e:
-                print(f"   ⚠ Frequency domain computation failed: {e}")
-                lf_hf_ratio = 1.5
-            
-            # Nonlinear domain
-            try:
-                hrv_nonlinear = nk.hrv_nonlinear(all_peaks, sampling_rate=sample_rate, show=False)
-                sd1 = safe_float(hrv_nonlinear['HRV_SD1'].iloc[0], 30.0) if 'HRV_SD1' in hrv_nonlinear.columns else 30.0
-                sd2 = safe_float(hrv_nonlinear['HRV_SD2'].iloc[0], 60.0) if 'HRV_SD2' in hrv_nonlinear.columns else 60.0
-                sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0.5
-            except Exception as e:
-                print(f"   ⚠ Nonlinear domain computation failed: {e}")
-                sd1_sd2_ratio = 0.5
+            # Aggregate metrics from all samples
+            mean_hr = safe_float(np.mean(hr_values), 70.0)
+            sdnn = safe_float(np.mean(sdnn_values), 50.0) if sdnn_values else 50.0
+            rmssd = safe_float(np.mean(rmssd_values), 40.0) if rmssd_values else 40.0
+            pnn50 = safe_float(np.mean(pnn50_values), 20.0) if pnn50_values else 20.0
+            lf_hf_ratio = safe_float(np.mean(lf_hf_values), 1.5) if lf_hf_values else 1.5
+            sd1_sd2_ratio = safe_float(np.mean(sd1_sd2_values), 0.5) if sd1_sd2_values else 0.5
             
             # Placeholder for accel variance (simulator doesn't send accel in baseline)
             accel_var = 0.0
