@@ -93,6 +93,7 @@ services:
     container_name: mqtt_broker
     ports:
       - "1883:1883"
+      - "9001:9001"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
       - ./mqtt_password.txt:/mosquitto/config/password.txt
