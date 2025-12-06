@@ -18,6 +18,6 @@ public class RegisterRequest {
     private String password;
 
     @NotBlank(message = "Role is required")
-    @Pattern(regexp = "customer|doctor", message = "Role must be either 'customer' or 'doctor'")
+    @Pattern(regexp = "USER|customer|doctor", message = "Role must be 'USER', 'customer', or 'doctor'")
     private String role;
 }

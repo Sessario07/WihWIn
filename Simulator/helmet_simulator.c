@@ -11,7 +11,7 @@
 // ============== EC2 CLOUD CONFIGURATION ==============
 #define ADDRESS     "tcp://35.77.98.154:1883"
 #define CLIENTID    "SmartHelmetSim"
-#define DEVICE_ID   "HELMET002"
+#define DEVICE_ID   "HELMET003"
 #define QOS         1
 #define TIMEOUT     10000L
 #define ONBOARD_SAMPLES 12
