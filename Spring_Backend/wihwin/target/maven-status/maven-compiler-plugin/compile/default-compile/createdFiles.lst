@@ -22,7 +22,6 @@ com/wihwin/dto/CustomerProfileRequest.class
 com/wihwin/WihwinApplication.class
 com/wihwin/entity/Device.class
 com/wihwin/security/UserPrincipal.class
-com/wihwin/wihwin/WihwinApplication.class
 com/wihwin/repository/DoctorProfileRepository.class
 com/wihwin/security/CustomUserDetailsService.class
 com/wihwin/entity/CustomerProfile.class
