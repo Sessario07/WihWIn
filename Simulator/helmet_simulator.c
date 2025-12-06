@@ -323,19 +323,48 @@ int main() {
     }
 
     printf("\nStep 2: Connecting to MQTT broker\n");
+    printf("Address: %s\n", ADDRESS);
+    printf("Client ID: %s\n", CLIENTID);
+    printf("Username: %s\n", MQTT_USERNAME);
+    
     MQTTClient client;
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-    MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    
+    int create_rc = MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    if (create_rc != MQTTCLIENT_SUCCESS) {
+        printf("Failed to create MQTT client. Error code: %d\n", create_rc);
+        exit(EXIT_FAILURE);
+    }
+    
     conn_opts.keepAliveInterval = 60;
     conn_opts.cleansession = 1;
     conn_opts.username = MQTT_USERNAME;
     conn_opts.password = MQTT_PASSWORD;
+    conn_opts.connectTimeout = 30;  // 30 second timeout
 
-    if (MQTTClient_connect(client, &conn_opts) != MQTTCLIENT_SUCCESS) {
+    printf("Attempting connection...\n");
+    int rc = MQTTClient_connect(client, &conn_opts);
+    if (rc != MQTTCLIENT_SUCCESS) {
         printf("Failed to connect MQTT broker.\n");
+        printf("Error code: %d\n", rc);
+        printf("Error details:\n");
+        switch(rc) {
+            case 1: printf("  - Connection refused: unacceptable protocol version\n"); break;
+            case 2: printf("  - Connection refused: identifier rejected\n"); break;
+            case 3: printf("  - Connection refused: server unavailable\n"); break;
+            case 4: printf("  - Connection refused: bad username or password\n"); break;
+            case 5: printf("  - Connection refused: not authorized\n"); break;
+            case -1: printf("  - TCP connection failed (network unreachable or firewall blocking)\n"); break;
+            default: printf("  - Unknown error or connection failure\n"); break;
+        }
+        printf("\nTroubleshooting:\n");
+        printf("1. Check if port 1883 is open on the server\n");
+        printf("2. Verify the server IP: %s\n", ADDRESS);
+        printf("3. Test with: mosquitto_sub -h 35.77.98.154 -p 1883 -u helmet -P 'WihWin_Mqtt_2024!Secure' -t test\n");
+        MQTTClient_destroy(&client);
         exit(EXIT_FAILURE);
     }
-    printf("Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
+    printf("✓ Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
 
     MQTTClient_setCallbacks(client, NULL, NULL, messageArrivedCB, NULL);
     MQTTClient_subscribe(client, TOPIC_CMD, QOS);
