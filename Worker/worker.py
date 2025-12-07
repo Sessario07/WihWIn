@@ -6,6 +6,7 @@ import requests
 from datetime import datetime, timedelta
 from collections import defaultdict
 import time
+import math
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi:8000")
 MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt")
@@ -45,6 +46,19 @@ GENERAL_BASELINE = {
     "lf_hf_ratio": 1.5,
     "sd1_sd2_ratio": 0.5
 }
+
+def sanitize_metrics(metrics):
+    """Replace NaN/Inf values with 0.0 for JSON compatibility"""
+    sanitized = {}
+    for key, value in metrics.items():
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                sanitized[key] = 0.0
+            else:
+                sanitized[key] = value
+        else:
+            sanitized[key] = value
+    return sanitized
 
 def compute_hrv(ppg_data, sampling_rate):
     """Compute HRV metrics using NeuroKit2"""
@@ -323,6 +337,7 @@ def on_message_telemetry(client, userdata, msg):
         
         # Process PPG data to extract HRV metrics and HR
         hrv_metrics = compute_hrv(ppg_data, sample_rate)
+        hrv_metrics = sanitize_metrics(hrv_metrics)
         
         if hrv_metrics is None:
             print(f"[{device_id}] ❌ HRV computation failed, skipping...")
