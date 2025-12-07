@@ -94,6 +94,175 @@ def get_ride_analysis(ride_id: str):
         }
     }
 
+@app.get("/rides/{ride_id}/hr-timeline")
+def get_ride_hr_timeline(ride_id: str):
+    """Get heart rate timeline for charts"""
+    from repositories.ride_repository import RideRepository
+    from config.database import get_db_connection
+    
+    # Verify ride exists
+    ride = RideRepository.get_ride_by_id(ride_id)
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get HR data from raw_ppg_telemetry
+    cursor.execute("""
+        SELECT timestamp, hr
+        FROM raw_ppg_telemetry
+        WHERE ride_id = %s AND hr IS NOT NULL
+        ORDER BY timestamp ASC
+    """, (ride_id,))
+    
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return {
+        "ride_id": ride_id,
+        "data": [
+            {
+                "timestamp": row[0].isoformat(),
+                "hr": float(row[1])
+            }
+            for row in rows
+        ]
+    }
+
+@app.get("/rides/{ride_id}/hrv-timeline")
+def get_ride_hrv_timeline(ride_id: str):
+    """Get HRV (RMSSD) timeline for charts"""
+    from repositories.ride_repository import RideRepository
+    from repositories.baseline_repository import BaselineRepository
+    from config.database import get_db_connection
+    
+    # Verify ride exists
+    ride = RideRepository.get_ride_by_id(ride_id)
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+    
+    # Get baseline
+    baseline_rmssd = ride.get('baseline_rmssd', 45.0)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get RMSSD data from raw_ppg_telemetry
+    cursor.execute("""
+        SELECT timestamp, rmssd, sdnn, pnn50, lf_hf_ratio
+        FROM raw_ppg_telemetry
+        WHERE ride_id = %s AND rmssd IS NOT NULL
+        ORDER BY timestamp ASC
+    """, (ride_id,))
+    
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return {
+        "ride_id": ride_id,
+        "baseline_rmssd": baseline_rmssd,
+        "data": [
+            {
+                "timestamp": row[0].isoformat(),
+                "rmssd": float(row[1]),
+                "sdnn": float(row[2]) if row[2] else None,
+                "pnn50": float(row[3]) if row[3] else None,
+                "lf_hf_ratio": float(row[4]) if row[4] else None
+            }
+            for row in rows
+        ]
+    }
+
+@app.get("/rides/{ride_id}/events")
+def get_ride_events(ride_id: str):
+    """Get drowsiness events for map visualization"""
+    from repositories.ride_repository import RideRepository
+    from config.database import get_db_connection
+    
+    # Verify ride exists
+    ride = RideRepository.get_ride_by_id(ride_id)
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get drowsiness events
+    cursor.execute("""
+        SELECT detected_at, lat, lon, status, severity_score, 
+               hr_at_event, sdnn, rmssd, pnn50, lf_hf_ratio
+        FROM drowsiness_events
+        WHERE ride_id = %s
+        ORDER BY detected_at ASC
+    """, (ride_id,))
+    
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return {
+        "ride_id": ride_id,
+        "total_events": len(rows),
+        "events": [
+            {
+                "timestamp": row[0].isoformat(),
+                "lat": float(row[1]) if row[1] else None,
+                "lon": float(row[2]) if row[2] else None,
+                "status": row[3],
+                "severity_score": row[4],
+                "metrics": {
+                    "hr": float(row[5]) if row[5] else None,
+                    "sdnn": float(row[6]) if row[6] else None,
+                    "rmssd": float(row[7]) if row[7] else None,
+                    "pnn50": float(row[8]) if row[8] else None,
+                    "lf_hf_ratio": float(row[9]) if row[9] else None
+                }
+            }
+            for row in rows
+        ]
+    }
+
+@app.get("/rides/{ride_id}/route")
+def get_ride_route(ride_id: str):
+    """Get GPS route for map visualization"""
+    from repositories.ride_repository import RideRepository
+    from config.database import get_db_connection
+    
+    # Verify ride exists
+    ride = RideRepository.get_ride_by_id(ride_id)
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get GPS coordinates from telemetry
+    cursor.execute("""
+        SELECT timestamp, lat, lon
+        FROM raw_ppg_telemetry
+        WHERE ride_id = %s AND lat IS NOT NULL AND lon IS NOT NULL
+        ORDER BY timestamp ASC
+    """, (ride_id,))
+    
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return {
+        "ride_id": ride_id,
+        "route": [
+            {
+                "timestamp": row[0].isoformat(),
+                "lat": float(row[1]),
+                "lon": float(row[2])
+            }
+            for row in rows
+        ]
+    }
+
 @app.post("/telemetry/batch")
 def batch_telemetry(batch: TelemetryBatch):
     return RideService.save_telemetry_batch(batch.device_id, batch.ride_id, batch.telemetry)
