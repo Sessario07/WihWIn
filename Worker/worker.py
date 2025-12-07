@@ -75,55 +75,62 @@ def compute_hrv(ppg_data, sampling_rate):
 
 def assess_drowsiness(current_metrics, baseline_metrics):
     """
-    Multi-metric drowsiness assessment with stricter microsleep detection
+    Multi-metric drowsiness assessment with MUCH STRICTER thresholds
+    Now requires severe HRV degradation to trigger alerts
     Returns: (should_alert, drowsiness_score, status_label, alerts)
     """
     drowsiness_score = 0
     alerts = []
     
-    # 1. SDNN Check (weight: 3) - Must drop 35% for microsleep
-    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.65:  # 35% drop
+    # 1. SDNN Check (weight: 3) - STRICTER: Must drop 50% for microsleep, 35% for drowsy
+    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.50:  # 50% drop (was 35%)
         drowsiness_score += 3
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
-    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.80:  # 20% drop
+    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.65:  # 35% drop (was 20%)
         drowsiness_score += 2
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
+    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.75:  # 25% drop (NEW)
+        drowsiness_score += 1
+        alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
     
-    # 2. RMSSD Check (weight: 3) - Must drop 40% for microsleep
-    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:  # 40% drop
+    # 2. RMSSD Check (weight: 3) - STRICTER: Must drop 55% for microsleep, 40% for drowsy
+    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.45:  # 55% drop (was 40%)
         drowsiness_score += 3
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
-    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.75:  # 25% drop
+    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:  # 40% drop (was 25%)
         drowsiness_score += 2
+        alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100)::.1f}%")
+    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.70:  # 30% drop (NEW)
+        drowsiness_score += 1
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     
-    # 3. pNN50 Check (weight: 2) - Must drop 45% for microsleep
-    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.55:  # 45% drop
+    # 3. pNN50 Check (weight: 2) - STRICTER: Must drop 60% for microsleep, 45% for drowsy
+    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.40:  # 60% drop (was 45%)
         drowsiness_score += 2
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
-    elif current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.70:  # 30% drop
+    elif current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.55:  # 45% drop (was 30%)
         drowsiness_score += 1
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
     
-    # 4. LF/HF Ratio Check (weight: 2) - Must increase 50% for microsleep
-    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.50:  # 50% increase
+    # 4. LF/HF Ratio Check (weight: 2) - STRICTER: Must increase 70% for microsleep, 50% for drowsy
+    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.70:  # 70% increase (was 50%)
         drowsiness_score += 2
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
-    elif current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.30:  # 30% increase
+    elif current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.50:  # 50% increase (was 30%)
         drowsiness_score += 1
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
     
-    # 5. SD1/SD2 Ratio Check (weight: 1) - Must deviate 40%
+    # 5. SD1/SD2 Ratio Check (weight: 1) - STRICTER: Must deviate 60%
     ratio_diff = abs(current_metrics["sd1_sd2_ratio"] - baseline_metrics["sd1_sd2_ratio"])
-    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.40:  # 40% deviation
+    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.60:  # 60% deviation (was 40%)
         drowsiness_score += 1
         alerts.append(f"SD1/SD2 ratio deviated by {(ratio_diff / baseline_metrics['sd1_sd2_ratio'] * 100):.1f}%")
     
-    # Determine status label - STRICTER THRESHOLDS
-    if drowsiness_score >= 9:  # Raised from 8 to 9
+    # Determine status label - MUCH STRICTER THRESHOLDS
+    if drowsiness_score >= 11:  # Raised from 9 to 11 (maximum possible score)
         status_label = "MICROSLEEP"
         should_alert = True
-    elif drowsiness_score >= 6:  # Raised from 5 to 6
+    elif drowsiness_score >= 8:  # Raised from 6 to 8
         status_label = "DROWSY"
         should_alert = True
     else:
