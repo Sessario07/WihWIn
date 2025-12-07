@@ -9,10 +9,22 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 import random
 import uuid
+import socket
+import os
+
+# Auto-detect if running on EC2 (check hostname or try localhost first)
+def get_db_host():
+    """Detect if running on EC2 or locally"""
+    hostname = socket.gethostname()
+    # If running on EC2, use localhost
+    if 'ip-' in hostname or 'ec2' in hostname.lower():
+        return 'localhost'
+    # Otherwise use external IP
+    return '35.77.98.154'
 
 # EC2 PostgreSQL Configuration
 DB_CONFIG = {
-    'host': '35.77.98.154',
+    'host': get_db_host(),
     'port': 5432,
     'database': 'wihwin',
     'user': 'wihwin',
@@ -48,7 +60,7 @@ def create_test_user(conn):
         """, (
             'helmet005_user',
             TEST_USER_EMAIL,
-            '$2a$10$XQZ9Y.X5x5x5x5x5x5x5x5OeK5K5K5K5K5K5K5K5K5K5K5K5K',  # Dummy hash
+            '$2a$10$XQZ9Y.X5x5x5x5x5x5x5OeK5K5K5K5K5K5K5K5K5K5K5K5K',  # Dummy hash
             'customer',
             datetime.now()
         ))
