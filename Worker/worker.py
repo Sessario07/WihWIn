@@ -27,8 +27,14 @@ last_flush_time = {}
 # Active ride tracking: device_id -> ride_id
 active_rides = {}
 
-# Flush telemetry to database every 10 minutes
-FLUSH_INTERVAL_SECONDS = 600  # 10 minutes
+# Track last telemetry time for auto-end: device_id -> timestamp
+last_telemetry_time = {}
+
+# Flush telemetry to database every 2 minutes
+FLUSH_INTERVAL_SECONDS = 120  # 2 minutes
+
+# Auto-end ride timeout (5 minutes of no telemetry)
+RIDE_TIMEOUT_SECONDS = 300  # 5 minutes
 
 # General baseline for devices without personalized baseline
 GENERAL_BASELINE = {
@@ -69,43 +75,55 @@ def compute_hrv(ppg_data, sampling_rate):
 
 def assess_drowsiness(current_metrics, baseline_metrics):
     """
-    Multi-metric drowsiness assessment
+    Multi-metric drowsiness assessment with stricter microsleep detection
     Returns: (should_alert, drowsiness_score, status_label, alerts)
     """
     drowsiness_score = 0
     alerts = []
     
-    # 1. SDNN Check (weight: 3)
-    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.80:
+    # 1. SDNN Check (weight: 3) - Must drop 35% for microsleep
+    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.65:  # 35% drop
         drowsiness_score += 3
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
+    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.80:  # 20% drop
+        drowsiness_score += 2
+        alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
     
-    # 2. RMSSD Check (weight: 3)
-    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.75:
+    # 2. RMSSD Check (weight: 3) - Must drop 40% for microsleep
+    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:  # 40% drop
         drowsiness_score += 3
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
+    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.75:  # 25% drop
+        drowsiness_score += 2
+        alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     
-    # 3. pNN50 Check (weight: 2)
-    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.70:
+    # 3. pNN50 Check (weight: 2) - Must drop 45% for microsleep
+    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.55:  # 45% drop
         drowsiness_score += 2
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
+    elif current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.70:  # 30% drop
+        drowsiness_score += 1
+        alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
     
-    # 4. LF/HF Ratio Check (weight: 2)
-    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.3:
+    # 4. LF/HF Ratio Check (weight: 2) - Must increase 50% for microsleep
+    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.50:  # 50% increase
         drowsiness_score += 2
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
+    elif current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.30:  # 30% increase
+        drowsiness_score += 1
+        alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
     
-    # 5. SD1/SD2 Ratio Check (weight: 1)
+    # 5. SD1/SD2 Ratio Check (weight: 1) - Must deviate 40%
     ratio_diff = abs(current_metrics["sd1_sd2_ratio"] - baseline_metrics["sd1_sd2_ratio"])
-    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.3:
+    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.40:  # 40% deviation
         drowsiness_score += 1
         alerts.append(f"SD1/SD2 ratio deviated by {(ratio_diff / baseline_metrics['sd1_sd2_ratio'] * 100):.1f}%")
     
-    # Determine status label
-    if drowsiness_score >= 8:
+    # Determine status label - STRICTER THRESHOLDS
+    if drowsiness_score >= 9:  # Raised from 8 to 9
         status_label = "MICROSLEEP"
         should_alert = True
-    elif drowsiness_score >= 5:
+    elif drowsiness_score >= 6:  # Raised from 5 to 6
         status_label = "DROWSY"
         should_alert = True
     else:
@@ -190,6 +208,54 @@ def flush_telemetry_buffer(device_id):
             
     except Exception as e:
         print(f"[BATCH] ❌ Error flushing telemetry: {e}")
+
+def end_ride_if_timeout(device_id):
+    """End ride if no telemetry received for RIDE_TIMEOUT_SECONDS"""
+    if device_id not in active_rides:
+        return
+    
+    if device_id not in last_telemetry_time:
+        return
+    
+    current_time = time.time()
+    time_since_last = current_time - last_telemetry_time[device_id]
+    
+    if time_since_last >= RIDE_TIMEOUT_SECONDS:
+        ride_id = active_rides[device_id]
+        
+        print(f"\n[RIDE] ⏱️  Device {device_id} inactive for {int(time_since_last)}s")
+        print(f"[RIDE] 🏁 Auto-ending ride {ride_id} due to timeout...")
+        
+        try:
+            # Flush any remaining telemetry before ending ride
+            flush_telemetry_buffer(device_id)
+            
+            # Call FastAPI to end the ride
+            response = requests.post(
+                f"{FASTAPI_URL}/rides/{ride_id}/end",
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                print(f"[RIDE] ✓ Ride {ride_id} ended successfully")
+                
+                # Clean up tracking data
+                del active_rides[device_id]
+                del last_telemetry_time[device_id]
+                if device_id in telemetry_buffer:
+                    telemetry_buffer[device_id].clear()
+                if device_id in last_flush_time:
+                    del last_flush_time[device_id]
+            else:
+                print(f"[RIDE] ❌ Failed to end ride: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"[RIDE] ❌ Error ending ride: {e}")
+
+def check_all_rides_timeout():
+    """Check all active rides for timeout"""
+    devices_to_check = list(active_rides.keys())
+    for device_id in devices_to_check:
+        end_ride_if_timeout(device_id)
 
 def on_message_baseline(client, userdata, msg):
     """Handle baseline messages from devices"""
@@ -305,6 +371,9 @@ def on_message_telemetry(client, userdata, msg):
         if current_time - last_flush_time[device_id] >= FLUSH_INTERVAL_SECONDS:
             flush_telemetry_buffer(device_id)
         
+        # Update last telemetry time
+        last_telemetry_time[device_id] = current_time
+        
         print(f"\n[{device_id}] Received telemetry: HR={hr:.1f} bpm, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
         print(f"[{device_id}] Drowsiness Score: {drowsiness_score}/11 | Status: {status_label}")
         print(f"  Current - SDNN: {hrv_metrics['sdnn']:.2f}, RMSSD: {hrv_metrics['rmssd']:.2f}, pNN50: {hrv_metrics['pnn50']:.2f}")
@@ -378,9 +447,9 @@ def on_connect(client, userdata, flags, reason_code, properties):
     print(f"  - LF/HF Ratio: Autonomic balance (weight: 2)")
     print(f"  - SD1/SD2 Ratio: Poincaré analysis (weight: 1)")
     print(f"  - Status Labels:")
-    print(f"    * AWAKE: Score < 5")
-    print(f"    * DROWSY: Score 5-7")
-    print(f"    * MICROSLEEP: Score >= 8")
+    print(f"    * AWAKE: Score < 6")
+    print(f"    * DROWSY: Score 6-8")
+    print(f"    * MICROSLEEP: Score >= 9")
     print(f"\n💾 General Baseline (fallback):")
     print(f"  - SDNN: {GENERAL_BASELINE['sdnn']}, RMSSD: {GENERAL_BASELINE['rmssd']}, pNN50: {GENERAL_BASELINE['pnn50']}\n")
 
@@ -392,4 +461,6 @@ client.on_connect = on_connect
 print("Connecting to MQTT broker...")
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
 
-client.loop_forever()
+while True:
+    check_all_rides_timeout()
+    client.loop(timeout=1.0)
