@@ -20,7 +20,7 @@ class BaselineService:
     def compute_baseline(device_id: str, samples: list, sample_rate: int = 50) -> dict:
         
         try:
-            print(f"\n🧮 Computing baseline for device {device_id}")
+            print(f"\n[BASELINE] Computing baseline for device {device_id}")
             print(f"   Received {len(samples)} PPG samples at {sample_rate} Hz")
             
             # Collect HRV metrics from each sample
@@ -38,7 +38,7 @@ class BaselineService:
                     peaks = info["PPG_Peaks"]
                     
                     if len(peaks) < 2:
-                        print(f"   ⚠ Warning: Sample {i+1} has insufficient peaks, skipping...")
+                        print(f"   [WARN] Sample {i+1} has insufficient peaks, skipping...")
                         continue
                     
                     # Calculate HR from this sample
@@ -61,7 +61,7 @@ class BaselineService:
                         if 'HRV_pNN50' in hrv_time.columns:
                             pnn50_values.append(safe_float(hrv_time['HRV_pNN50'].iloc[0], 20.0))
                     except Exception as e:
-                        print(f"   ⚠ Warning: Time domain computation failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Time domain computation failed for sample {i+1}: {e}")
                     
                     # Frequency domain
                     try:
@@ -69,7 +69,7 @@ class BaselineService:
                         if 'HRV_LFHF' in hrv_freq.columns:
                             lf_hf_values.append(safe_float(hrv_freq['HRV_LFHF'].iloc[0], 1.5))
                     except Exception as e:
-                        print(f"   ⚠ Warning: Frequency domain failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Frequency domain failed for sample {i+1}: {e}")
                     
                     # Nonlinear domain
                     try:
@@ -80,17 +80,17 @@ class BaselineService:
                             if sd2 != 0:
                                 sd1_sd2_values.append(sd1 / sd2)
                     except Exception as e:
-                        print(f"   ⚠ Warning: Nonlinear domain failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Nonlinear domain failed for sample {i+1}: {e}")
                     
                 except Exception as e:
-                    print(f"   ⚠ Warning: Failed to process sample {i+1}: {e}")
+                    print(f"   [WARN] Failed to process sample {i+1}: {e}")
                     continue
             
             # Check if we have enough valid samples
             if len(hr_values) < 3:
                 raise HTTPException(status_code=400, detail="Insufficient valid PPG samples to compute baseline")
             
-            print(f"   ✓ Successfully processed {len(hr_values)} out of {len(samples)} samples")
+            print(f"   [OK] Successfully processed {len(hr_values)} out of {len(samples)} samples")
             
             # Aggregate metrics from all samples
             mean_hr = safe_float(np.mean(hr_values), 70.0)
@@ -118,7 +118,7 @@ class BaselineService:
                 'hr_decay_rate': hr_decay_rate
             }
             
-            print(f"   ✓ Computed metrics:")
+            print(f"   [OK] Computed metrics:")
             print(f"     Mean HR: {mean_hr:.2f} bpm")
             print(f"     SDNN: {sdnn:.2f} ms")
             print(f"     RMSSD: {rmssd:.2f} ms")
@@ -136,13 +136,13 @@ class BaselineService:
             BaselineRepository.save_baseline(device_uuid, metrics)
             DeviceRepository.mark_onboarded(device_uuid)
             
-            print(f"✓ Baseline saved to database")
-            print(f"✓ Device marked as onboarded\n")
+            print(f"[OK] Baseline saved to database")
+            print(f"[OK] Device marked as onboarded\n")
             
             return metrics
             
         except Exception as e:
-            print(f"❌ Error computing baseline: {e}")
+            print(f"[ERROR] Error computing baseline: {e}")
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Error computing baseline: {str(e)}")

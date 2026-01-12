@@ -2,3 +2,28 @@
 mqtt_password.txt
 .DS_Store
 smart wihwin
+
+# Java/Maven build output
+target/
+*.class
+*.jar
+*.war
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# RabbitMQ data
+rabbitmq_data/

@@ -82,7 +82,7 @@ CREATE TABLE rides (
     baseline_rmssd FLOAT,
     baseline_deviation_pct FLOAT,  
     recovery_status VARCHAR(20) CHECK (recovery_status IN ('slow', 'normal', 'fast')),
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ending', 'completed', 'cancelled')),
     created_at TIMESTAMP DEFAULT now()
 );
 
@@ -213,7 +213,6 @@ CREATE TABLE crash_alerts (
 );
 
 CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_devices_user_id ON devices(user_id);
 CREATE INDEX idx_devices_device_id ON devices(device_id);
 CREATE INDEX idx_doctor_location ON doctor_profiles(lat, lon);

@@ -1,12 +1,9 @@
 package com.wihwin.controller;
 
 import com.wihwin.dto.*;
-import com.wihwin.entity.User;
-import com.wihwin.security.UserPrincipal;
 import com.wihwin.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController

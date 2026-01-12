@@ -5,3 +5,4 @@ paho-mqtt
 requests
 neurokit2
 numpy
+pika

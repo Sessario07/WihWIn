@@ -1,40 +1,39 @@
 package com.wihwin.controller;
 
+import com.wihwin.dto.ApiResponse;
 import com.wihwin.security.UserPrincipal;
-import org.springframework.beans.factory.annotation.Value;
+import com.wihwin.service.AnalysisService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 
 @RestController
 @RequestMapping("/analysis")
 public class AnalysisController {
 
-    @Value("${fastapi.url}")
-    private String fastapiUrl;
+    private final AnalysisService analysisService;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    public AnalysisController(AnalysisService analysisService) {
+        this.analysisService = analysisService;
+    }
 
     @GetMapping("/trends")
     public ResponseEntity<?> getTrends(
             @RequestParam(defaultValue = "30") int days,
             @AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/daily-hrv-trend?days=" + days;
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getTrends(userPrincipal.getId(), days));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching trends from FastAPI: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching trends: " + e.getMessage()));
         }
     }
 
     @GetMapping("/weekly-fatigue")
     public ResponseEntity<?> getWeeklyFatigue(@AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/weekly-fatigue-score";
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getWeeklyFatigue(userPrincipal.getId()));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching weekly fatigue: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching weekly fatigue: " + e.getMessage()));
         }
     }
 
@@ -43,10 +42,9 @@ public class AnalysisController {
             @RequestParam(defaultValue = "7") int days,
             @AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/hrv-heatmap?days=" + days;
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getHeatmap(userPrincipal.getId(), days));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching heatmap: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching heatmap: " + e.getMessage()));
         }
     }
 
@@ -55,10 +53,9 @@ public class AnalysisController {
             @RequestParam(defaultValue = "30") int days,
             @AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/lf-hf-trend?days=" + days;
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getLfHfTrend(userPrincipal.getId(), days));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching LF/HF trend: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching LF/HF trend: " + e.getMessage()));
         }
     }
 
@@ -68,20 +65,18 @@ public class AnalysisController {
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/rides?page=" + page + "&size=" + size;
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getRides(userPrincipal.getId(), page, size));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching rides: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching rides: " + e.getMessage()));
         }
     }
 
     @GetMapping("/fatigue-patterns")
     public ResponseEntity<?> getFatiguePatterns(@AuthenticationPrincipal UserPrincipal userPrincipal) {
         try {
-            String url = fastapiUrl + "/users/" + userPrincipal.getId() + "/fatigue-patterns";
-            return ResponseEntity.ok(restTemplate.getForObject(url, Object.class));
+            return ResponseEntity.ok(analysisService.getFatiguePatterns(userPrincipal.getId()));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error fetching fatigue patterns: " + e.getMessage());
+            return ResponseEntity.status(500).body(new ApiResponse(false, "Error fetching fatigue patterns: " + e.getMessage()));
         }
     }
 }

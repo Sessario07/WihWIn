@@ -256,14 +256,14 @@ void call_baseline_api(const char *device_id) {
             printf("Baseline API response: %s\n", response);
             
             if (strstr(response, "\"success\":true") || strstr(response, "\"success\": true")) {
-                printf("✓ Baseline computed and saved successfully!\n");
+                printf("[OK] Baseline computed and saved successfully!\n");
                 has_baseline = true;
                 parse_baseline_from_response(response);
             } else {
-                printf("✗ Baseline computation failed\n");
+                printf("[ERROR] Baseline computation failed\n");
             }
         } else {
-            printf("✗ API call failed: %s\n", curl_easy_strerror(res));
+            printf("[ERROR] API call failed: %s\n", curl_easy_strerror(res));
         }
         
         curl_slist_free_all(headers);
@@ -364,7 +364,7 @@ int main() {
         MQTTClient_destroy(&client);
         exit(EXIT_FAILURE);
     }
-    printf("✓ Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
+    printf("[OK] Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
 
     MQTTClient_setCallbacks(client, NULL, NULL, messageArrivedCB, NULL);
     MQTTClient_subscribe(client, TOPIC_CMD, QOS);
@@ -433,7 +433,7 @@ int main() {
             
             onboard_count++;
             int progress = (onboard_count * 100) / ONBOARD_SAMPLES;
-            printf("📊 [%d/%d] %3d%% | Target HR=%.0f bpm | PPG samples=%d\n", 
+            printf("[PROGRESS] [%d/%d] %3d%% | Target HR=%.0f bpm | PPG samples=%d\n", 
                    onboard_count, ONBOARD_SAMPLES, progress, hr, PPG_BUFFER_SIZE);
         }
         
@@ -534,6 +534,6 @@ int main() {
     MQTTClient_disconnect(client, 10000);
     MQTTClient_destroy(&client);
     
-    printf("✓ Shutdown complete\n\n");
+    printf("[OK] Shutdown complete\n\n");
     return 0;
 }

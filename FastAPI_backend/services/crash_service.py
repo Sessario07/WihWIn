@@ -47,7 +47,7 @@ class CrashService:
             device_uuid, lat, lon, notified_doctor_id, distance_km
         )
         
-        print(f"✓ Crash alert logged for device {device_id} at ({lat}, {lon})")
+        print(f"[OK] Crash alert logged for device {device_id} at ({lat}, {lon})")
         
         return {
             "success": True,

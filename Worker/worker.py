@@ -8,8 +8,8 @@ from collections import defaultdict
 import time
 import math
 
-FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi:8000")
-MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt")
+FASTAPI_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
+MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "helmet")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "wihwin123")
@@ -35,7 +35,7 @@ last_telemetry_time = {}
 FLUSH_INTERVAL_SECONDS = 120  # 2 minutes
 
 # Auto-end ride timeout (5 minutes of no telemetry)
-RIDE_TIMEOUT_SECONDS = 300  # 5 minutes
+RIDE_TIMEOUT_SECONDS = 3600  # 1 hour
 
 # General baseline for devices without personalized baseline
 GENERAL_BASELINE = {
@@ -48,7 +48,6 @@ GENERAL_BASELINE = {
 }
 
 def sanitize_metrics(metrics):
-    """Replace NaN/Inf values with 0.0 for JSON compatibility"""
     sanitized = {}
     for key, value in metrics.items():
         if isinstance(value, float):
@@ -61,7 +60,6 @@ def sanitize_metrics(metrics):
     return sanitized
 
 def compute_hrv(ppg_data, sampling_rate):
-    """Compute HRV metrics using NeuroKit2"""
     try:
         signals, info = nk.ppg_process(ppg_data, sampling_rate=sampling_rate)
         
@@ -88,11 +86,7 @@ def compute_hrv(ppg_data, sampling_rate):
         return None
 
 def assess_drowsiness(current_metrics, baseline_metrics):
-    """
-    Multi-metric drowsiness assessment with MUCH STRICTER thresholds
-    Now requires severe HRV degradation to trigger alerts
-    Returns: (should_alert, drowsiness_score, status_label, alerts)
-    """
+
     drowsiness_score = 0
     alerts = []
     
@@ -113,7 +107,7 @@ def assess_drowsiness(current_metrics, baseline_metrics):
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:  # 40% drop (was 25%)
         drowsiness_score += 2
-        alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100)::.1f}%")
+        alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.70:  # 30% drop (NEW)
         drowsiness_score += 1
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
@@ -154,12 +148,10 @@ def assess_drowsiness(current_metrics, baseline_metrics):
     return should_alert, drowsiness_score, status_label, alerts
 
 def get_or_create_active_ride(device_id):
-    """Get active ride ID or create a new one"""
     if device_id in active_rides:
         return active_rides[device_id]
     
     try:
-        # Call FastAPI to start a new ride
         response = requests.post(
             f"{FASTAPI_URL}/rides/start",
             json={"device_id": device_id},
@@ -169,15 +161,14 @@ def get_or_create_active_ride(device_id):
         if response.status_code == 200:
             ride_id = response.json().get("ride_id")
             active_rides[device_id] = ride_id
-            print(f"[RIDE] ✓ Started new ride {ride_id} for device {device_id}")
+            print(f"[OK] Started new ride {ride_id} for device {device_id}")
             return ride_id
     except Exception as e:
-        print(f"[RIDE] ❌ Error starting ride: {e}")
+        print(f"[ERROR] Error starting ride: {e}")
     
     return None
 
 def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon):
-    """Log drowsiness event to database"""
     try:
         requests.post(
             f"{FASTAPI_URL}/drowsiness-events",
@@ -197,10 +188,9 @@ def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv
             timeout=5
         )
     except Exception as e:
-        print(f"[EVENT] ❌ Error logging drowsiness event: {e}")
+        print(f"[[ERROR] Error logging drowsiness event: {e}")
 
 def flush_telemetry_buffer(device_id):
-    """Send buffered telemetry to FastAPI for database storage"""
     if device_id not in telemetry_buffer or len(telemetry_buffer[device_id]) == 0:
         return
     
@@ -221,17 +211,16 @@ def flush_telemetry_buffer(device_id):
         
         if response.status_code == 200:
             count = len(telemetry_buffer[device_id])
-            print(f"[BATCH] ✓ Flushed {count} telemetry records for {device_id} to database")
+            print(f"[BATCH] [OK] Flushed {count} telemetry records for {device_id} to database")
             telemetry_buffer[device_id].clear()
             last_flush_time[device_id] = time.time()
         else:
-            print(f"[BATCH] ❌ Failed to flush telemetry: {response.status_code}")
+            print(f"[BATCH] [ERROR] Failed to flush telemetry: {response.status_code}")
             
     except Exception as e:
-        print(f"[BATCH] ❌ Error flushing telemetry: {e}")
+        print(f"[BATCH] [ERROR] Error flushing telemetry: {e}")
 
 def end_ride_if_timeout(device_id):
-    """End ride if no telemetry received for RIDE_TIMEOUT_SECONDS"""
     if device_id not in active_rides:
         return
     
@@ -244,23 +233,20 @@ def end_ride_if_timeout(device_id):
     if time_since_last >= RIDE_TIMEOUT_SECONDS:
         ride_id = active_rides[device_id]
         
-        print(f"\n[RIDE] ⏱️  Device {device_id} inactive for {int(time_since_last)}s")
-        print(f"[RIDE] 🏁 Auto-ending ride {ride_id} due to timeout...")
+        print(f"\n[RIDE] [TIMEOUT] Device {device_id} inactive for {int(time_since_last)}s")
+        print(f"[RIDE] [END] Auto-ending ride {ride_id} due to timeout...")
         
         try:
-            # Flush any remaining telemetry before ending ride
             flush_telemetry_buffer(device_id)
             
-            # Call FastAPI to end the ride
             response = requests.post(
                 f"{FASTAPI_URL}/rides/{ride_id}/end",
                 timeout=5
             )
             
             if response.status_code == 200:
-                print(f"[RIDE] ✓ Ride {ride_id} ended successfully")
+                print(f"[OK] Ride {ride_id} ended successfully")
                 
-                # Clean up tracking data
                 del active_rides[device_id]
                 del last_telemetry_time[device_id]
                 if device_id in telemetry_buffer:
@@ -268,9 +254,9 @@ def end_ride_if_timeout(device_id):
                 if device_id in last_flush_time:
                     del last_flush_time[device_id]
             else:
-                print(f"[RIDE] ❌ Failed to end ride: HTTP {response.status_code}")
+                print(f"[RIDE] [ERROR] Failed to end ride: HTTP {response.status_code}")
         except Exception as e:
-            print(f"[RIDE] ❌ Error ending ride: {e}")
+            print(f"[RIDE] [ERROR] Error ending ride: {e}")
 
 def check_all_rides_timeout():
     """Check all active rides for timeout"""
@@ -281,13 +267,11 @@ def check_all_rides_timeout():
 def on_message_baseline(client, userdata, msg):
     """Handle baseline messages from devices"""
     try:
-        # Extract device_id from topic: helmet/<deviceID>/baseline
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
         
-        # Cache the baseline
         baseline_cache[device_id] = {
             "mean_hr": payload.get("mean_hr"),
             "sdnn": payload.get("sdnn"),
@@ -297,24 +281,22 @@ def on_message_baseline(client, userdata, msg):
             "sd1_sd2_ratio": payload.get("sd1_sd2_ratio")
         }
         
-        print(f"\n[BASELINE] ✓ Cached baseline for device {device_id}")
+        print(f"\n[BASELINE] [OK] Cached baseline for device {device_id}")
         print(f"  SDNN: {baseline_cache[device_id]['sdnn']:.2f}, RMSSD: {baseline_cache[device_id]['rmssd']:.2f}")
         
     except Exception as e:
-        print(f"[BASELINE] ❌ Error processing baseline: {e}")
+        print(f"[BASELINE] [ERROR] Error processing baseline: {e}")
         import traceback
         traceback.print_exc()
 
 def on_message_telemetry(client, userdata, msg):
     """Handle telemetry messages from devices"""
     try:
-        # Extract device_id from topic: helmet/<deviceID>/telemetry
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
         
-        # Extract PPG data from simulator payload
         ppg_data = payload.get("ppg")  # Raw PPG array from simulator
         sample_rate = payload.get("sample_rate", 50)
         lat = payload.get("lat")
@@ -322,7 +304,7 @@ def on_message_telemetry(client, userdata, msg):
         
         # If no PPG data, skip processing
         if not ppg_data:
-            print(f"[{device_id}] ⚠️  No PPG data in payload, skipping...")
+            print(f"[{device_id}] [WARN] No PPG data in payload, skipping...")
             return
         
         # Get or create active ride
@@ -333,14 +315,14 @@ def on_message_telemetry(client, userdata, msg):
         using_general = device_id not in baseline_cache
         
         if using_general:
-            print(f"[{device_id}] ⚠️  Using general baseline (device not onboarded)")
+            print(f"[{device_id}] [WARN] Using general baseline (device not onboarded)")
         
         # Process PPG data to extract HRV metrics and HR
         hrv_metrics = compute_hrv(ppg_data, sample_rate)
         hrv_metrics = sanitize_metrics(hrv_metrics)
         
         if hrv_metrics is None:
-            print(f"[{device_id}] ❌ HRV computation failed, skipping...")
+            print(f"[{device_id}] [ERROR] HRV computation failed, skipping...")
             return
         
         # Extract heart rate from PPG peaks
@@ -359,7 +341,7 @@ def on_message_telemetry(client, userdata, msg):
                 hr = baseline.get("mean_hr", 70.0)
                 ibi_ms = 60000.0 / hr
         except Exception as e:
-            print(f"[{device_id}] ⚠️  HR extraction failed, using baseline: {e}")
+            print(f"[{device_id}] [WARN] HR extraction failed, using baseline: {e}")
             hr = baseline.get("mean_hr", 70.0)
             ibi_ms = 60000.0 / hr
         
@@ -402,17 +384,17 @@ def on_message_telemetry(client, userdata, msg):
         print(f"  Baseline - SDNN: {baseline['sdnn']:.2f}, RMSSD: {baseline['rmssd']:.2f}, pNN50: {baseline['pnn50']:.2f}")
         
         if should_alert:
-            print(f"  🚨 {status_label} DETECTED:")
+            print(f"  [ALERT] {status_label} DETECTED:")
             for alert in alerts:
                 print(f"     - {alert}")
         else:
-            print(f"  ✅ Normal state")
+            print(f"  [OK] Normal state")
         
         # Log drowsiness event if not AWAKE
         if status_label != "AWAKE" and ride_id:
             log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon)
         
-        # 🆕 Publish live analysis to mobile app topic
+        # Publish live analysis to mobile app topic
         live_analysis_topic = f"helmet/{device_id}/live-analysis"
         live_analysis_payload = {
             "device_id": device_id,
@@ -432,7 +414,7 @@ def on_message_telemetry(client, userdata, msg):
             }
         }
         client.publish(live_analysis_topic, json.dumps(live_analysis_payload), qos=1)
-        print(f"[MQTT] 📱 Published live analysis to {live_analysis_topic}")
+        print(f"[MQTT] Published live analysis to {live_analysis_topic}")
         
         # Send command back to helmet
         cmd_topic = f"helmet/{device_id}/command"
@@ -440,7 +422,7 @@ def on_message_telemetry(client, userdata, msg):
         client.publish(cmd_topic, json.dumps(command_payload), qos=1)
         
     except Exception as e:
-        print(f"[TELEMETRY] ❌ Error processing telemetry: {e}")
+        print(f"[TELEMETRY] [ERROR] Error processing telemetry: {e}")
         import traceback
         traceback.print_exc()
 
@@ -454,30 +436,30 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.message_callback_add("helmet/+/telemetry", on_message_telemetry)
     client.message_callback_add("helmet/+/baseline", on_message_baseline)
     
-    print(f"\n✓ Worker subscribed to:")
+    print(f"\n[OK] Worker subscribed to:")
     print(f"  - {TOPIC_TELEMETRY}")
     print(f"  - {TOPIC_BASELINE}")
-    print(f"\n📊 Telemetry buffering:")
+    print(f"\n[INFO] Telemetry buffering:")
     print(f"  - Flush interval: {FLUSH_INTERVAL_SECONDS}s ({FLUSH_INTERVAL_SECONDS/60:.0f} minutes)")
-    print(f"\n📱 Mobile App Live Stream:")
+    print(f"\n[INFO] Mobile App Live Stream:")
     print(f"  - Publishing to: helmet/<deviceID>/live-analysis")
     print(f"  - Includes: status (AWAKE/DROWSY/MICROSLEEP) + HRV metrics + location")
-    print(f"\n🧠 Drowsiness Detection:")
+    print(f"\n[INFO] Drowsiness Detection:")
     print(f"  - SDNN: Overall HRV (weight: 3)")
     print(f"  - RMSSD: Parasympathetic activity (weight: 3)")
     print(f"  - pNN50: Beat-to-beat variation (weight: 2)")
     print(f"  - LF/HF Ratio: Autonomic balance (weight: 2)")
-    print(f"  - SD1/SD2 Ratio: Poincaré analysis (weight: 1)")
+    print(f"  - SD1/SD2 Ratio: Poincare analysis (weight: 1)")
     print(f"  - Status Labels:")
     print(f"    * AWAKE: Score < 6")
     print(f"    * DROWSY: Score 6-8")
     print(f"    * MICROSLEEP: Score >= 9")
-    print(f"\n💾 General Baseline (fallback):")
+    print(f"\n[INFO] General Baseline (fallback):")
     print(f"  - SDNN: {GENERAL_BASELINE['sdnn']}, RMSSD: {GENERAL_BASELINE['rmssd']}, pNN50: {GENERAL_BASELINE['pnn50']}\n")
 
-# Set up MQTT client
+
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.username_pw_set(MQTT_USER, MQTT_PASSWORD)  # Add authentication
+client.username_pw_set(MQTT_USER, MQTT_PASSWORD) 
 client.on_connect = on_connect
 
 print("Connecting to MQTT broker...")
