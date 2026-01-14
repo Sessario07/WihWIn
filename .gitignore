@@ -2,3 +2,18 @@
 mqtt_password.txt
 .DS_Store
 smart wihwin
+
+
+# Java / Spring
+**/target/
+*.class
+
+# Python
+__pycache__/
+*.pyc
+
+# Test reports
+**/surefire-reports/
+
+# OS
+.DS_Store
