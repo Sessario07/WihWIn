@@ -13,12 +13,9 @@ app = FastAPI(
     version="2.0.0"
 )
 
-
-
 @app.get("/device/check", response_model=DeviceCheckResponse)
 def check_device(device_id: str):
     return DeviceService.check_device(device_id)
-
 
 @app.post("/baseline")
 def compute_baseline(request: BaselineRequest):
@@ -33,8 +30,6 @@ def compute_baseline(request: BaselineRequest):
         "metrics": metrics
     }
 
-
-
 @app.post("/crash")
 def crash_alert(alert: CrashAlert):
     return CrashService.handle_crash(
@@ -47,8 +42,6 @@ def crash_alert(alert: CrashAlert):
         alert.accel_y,
         alert.accel_z
     )
-
-
 
 @app.post("/rides/start")
 def start_ride(request: RideStart): 
@@ -96,11 +89,9 @@ def get_ride_analysis(ride_id: str):
 
 @app.get("/rides/{ride_id}/hr-timeline")
 def get_ride_hr_timeline(ride_id: str):
-    """Get heart rate timeline for charts"""
     from repositories.ride_repository import RideRepository
     from config.database import get_db_connection
     
-    # Verify ride exists
     ride = RideRepository.get_ride_by_id(ride_id)
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found")
@@ -108,7 +99,6 @@ def get_ride_hr_timeline(ride_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get HR data from raw_ppg_telemetry
     cursor.execute("""
         SELECT timestamp, hr
         FROM raw_ppg_telemetry
@@ -133,23 +123,19 @@ def get_ride_hr_timeline(ride_id: str):
 
 @app.get("/rides/{ride_id}/hrv-timeline")
 def get_ride_hrv_timeline(ride_id: str):
-    """Get HRV (RMSSD) timeline for charts"""
     from repositories.ride_repository import RideRepository
     from repositories.baseline_repository import BaselineRepository
     from config.database import get_db_connection
     
-    # Verify ride exists
     ride = RideRepository.get_ride_by_id(ride_id)
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found")
     
-    # Get baseline
     baseline_rmssd = ride.get('baseline_rmssd', 45.0)
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get RMSSD data from raw_ppg_telemetry
     cursor.execute("""
         SELECT timestamp, rmssd, sdnn, pnn50, lf_hf_ratio
         FROM raw_ppg_telemetry
@@ -178,11 +164,9 @@ def get_ride_hrv_timeline(ride_id: str):
 
 @app.get("/rides/{ride_id}/events")
 def get_ride_events(ride_id: str):
-    """Get drowsiness events for map visualization"""
     from repositories.ride_repository import RideRepository
     from config.database import get_db_connection
     
-    # Verify ride exists
     ride = RideRepository.get_ride_by_id(ride_id)
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found")
@@ -190,7 +174,6 @@ def get_ride_events(ride_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get drowsiness events
     cursor.execute("""
         SELECT detected_at, lat, lon, status, severity_score, 
                hr_at_event, sdnn, rmssd, pnn50, lf_hf_ratio
@@ -227,11 +210,9 @@ def get_ride_events(ride_id: str):
 
 @app.get("/rides/{ride_id}/route")
 def get_ride_route(ride_id: str):
-    """Get GPS route for map visualization"""
     from repositories.ride_repository import RideRepository
     from config.database import get_db_connection
     
-    # Verify ride exists
     ride = RideRepository.get_ride_by_id(ride_id)
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found")
@@ -239,7 +220,6 @@ def get_ride_route(ride_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get GPS coordinates from telemetry
     cursor.execute("""
         SELECT timestamp, lat, lon
         FROM raw_ppg_telemetry
@@ -285,12 +265,8 @@ def log_drowsiness_event(event: DrowsinessEvent):
     })
 
 
-
-#analytics yea
-
 @app.get("/users/{user_id}/baseline")
 def get_user_baseline(user_id: str):
-    """Get user's current baseline HRV metrics"""
     from repositories.baseline_repository import BaselineRepository
     
     baseline = BaselineRepository.get_user_baseline_full(user_id)
@@ -315,7 +291,6 @@ def get_user_baseline(user_id: str):
 
 @app.delete("/users/{user_id}/baseline")
 def delete_user_baseline(user_id: str):
-    """Delete user's baseline metrics"""
     from repositories.baseline_repository import BaselineRepository
     
     deleted = BaselineRepository.delete_user_baseline(user_id)
@@ -330,41 +305,34 @@ def delete_user_baseline(user_id: str):
 
 @app.get("/users/{user_id}/daily-hrv-trend")
 def get_daily_hrv_trend(user_id: str, days: int = 30):
-    """Feature 1: Daily RMSSD line chart with baseline and 7-day moving average"""
     return AnalyticsService.get_daily_hrv_trend(user_id, days)
 
 
 @app.get("/users/{user_id}/weekly-fatigue-score")
 def get_weekly_fatigue_score(user_id: str):
-    """Feature 2: Weekly fatigue score bar chart (7 days)"""
     return AnalyticsService.get_weekly_fatigue_score(user_id)
 
 
 @app.get("/users/{user_id}/hrv-heatmap")
 def get_hrv_heatmap(user_id: str, days: int = 7):
-    """Feature 3: HRV deviation heatmap by hour and day"""
     return AnalyticsService.get_hrv_heatmap(user_id, days)
 
 
 @app.get("/users/{user_id}/lf-hf-trend")
 def get_lf_hf_trend(user_id: str, days: int = 30):
-    """Feature 4: LF/HF ratio trend per ride"""
     return AnalyticsService.get_lf_hf_trend(user_id, days)
 
 
 @app.get("/users/{user_id}/fatigue-patterns")
 def get_fatigue_patterns(user_id: str):
-    """Analyze fatigue patterns by time of day and day of week"""
     return AnalyticsService.get_fatigue_patterns(user_id)
 
 
 @app.get("/users/{user_id}/rides")
 def get_user_rides(user_id: str, page: int = 0, size: int = 20):
-    """Feature 5: Ride list with summary cards"""
     from repositories.ride_repository import RideRepository
     from repositories.baseline_repository import BaselineRepository
     
-    # Get user's baseline
     baseline_data = BaselineRepository.get_user_baseline(user_id)
     baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
     
@@ -416,12 +384,8 @@ def get_user_rides(user_id: str, page: int = 0, size: int = 20):
     }
 
 
-
-
-
 @app.get("/health")
 def health_check():
-    """Health check endpoint"""
     from config.database import test_connection
     
     db_healthy = test_connection()

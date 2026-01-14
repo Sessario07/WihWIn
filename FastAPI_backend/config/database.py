@@ -4,8 +4,8 @@ from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from typing import Generator
 
-# Load database URL from environment
-DB_URL = os.getenv("DB_URL", "postgresql://postgres:yesyes123@db:5432/Wihwin")
+
+DB_URL = os.getenv("DB_URL", "postgresql://postgres:yesyes123@localhost:5432/Wihwin")
 
 @contextmanager
 def get_db_connection() -> Generator:

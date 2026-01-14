@@ -6,7 +6,6 @@ from datetime import datetime
 class RideRepository:
     @staticmethod
     def get_ride_by_id(ride_id: str) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -38,7 +37,6 @@ class RideRepository:
     
     @staticmethod
     def get_ride_events(ride_id: str) -> List[Dict]:
-      
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -63,7 +61,6 @@ class RideRepository:
     
     @staticmethod
     def get_active_ride(device_uuid: UUID) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -78,7 +75,6 @@ class RideRepository:
     
     @staticmethod
     def create_ride(device_uuid: UUID, user_id: Optional[UUID]) -> UUID:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -92,7 +88,6 @@ class RideRepository:
     @staticmethod
     def end_ride(ride_id: str, end_time: datetime, duration_seconds: int, 
                  avg_hr: float, max_hr: float, min_hr: float) -> None:
-      
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -102,6 +97,71 @@ class RideRepository:
                 WHERE id = %s
             """, (end_time, duration_seconds, avg_hr, max_hr, min_hr, ride_id))
     
+    @staticmethod
+    def mark_ride_ending(ride_id: str) -> bool:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE rides 
+                SET status = 'ending'
+                WHERE id = %s AND status = 'active'
+                RETURNING id
+            """, (ride_id,))
+            result = cur.fetchone()
+            return result is not None
+    
+    @staticmethod
+    def complete_ride_with_summary(
+        ride_id: str,
+        end_time: datetime,
+        duration_seconds: int,
+        avg_hr: Optional[float],
+        max_hr: Optional[float],
+        min_hr: Optional[float],
+        fatigue_score: int,
+        total_drowsiness: int,
+        total_microsleep: int,
+        max_score: Optional[int],
+        avg_score: Optional[float]
+    ) -> bool:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            cur.execute("SELECT status FROM rides WHERE id = %s", (ride_id,))
+            result = cur.fetchone()
+            
+            if not result:
+                return False
+            
+            if result['status'] == 'completed':
+                return True
+            
+            if result['status'] != 'ending':
+                return False
+            
+            cur.execute("""
+                UPDATE rides
+                SET end_time = %s, duration_seconds = %s, avg_hr = %s,
+                    max_hr = %s, min_hr = %s, status = 'completed'
+                WHERE id = %s AND status = 'ending'
+            """, (end_time, duration_seconds, avg_hr, max_hr, min_hr, ride_id))
+            
+            cur.execute("""
+                INSERT INTO ride_summaries 
+                (ride_id, fatigue_score, total_drowsiness_events, total_microsleep_events,
+                 max_drowsiness_score, avg_drowsiness_score)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ride_id) DO UPDATE SET
+                    fatigue_score = EXCLUDED.fatigue_score,
+                    total_drowsiness_events = EXCLUDED.total_drowsiness_events,
+                    total_microsleep_events = EXCLUDED.total_microsleep_events,
+                    max_drowsiness_score = EXCLUDED.max_drowsiness_score,
+                    avg_drowsiness_score = EXCLUDED.avg_drowsiness_score,
+                    computed_at = now()
+            """, (ride_id, fatigue_score, total_drowsiness, total_microsleep, max_score, avg_score))
+            
+            return True
+
     @staticmethod
     def get_ride_stats(ride_id: str) -> Optional[Dict]:
         with get_db_connection() as conn:
@@ -121,7 +181,6 @@ class RideRepository:
     
     @staticmethod
     def get_user_rides(user_id: str, limit: int, offset: int) -> Tuple[List[Dict], int]:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             
@@ -130,7 +189,6 @@ class RideRepository:
                 (user_id,)
             )
             total = cur.fetchone()['count']
-            
             
             cur.execute("""
                 SELECT 
@@ -158,7 +216,6 @@ class RideRepository:
     def create_ride_summary(ride_id: str, fatigue_score: int, 
                            total_drowsiness: int, total_microsleep: int,
                            max_score: int, avg_score: float) -> None:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""

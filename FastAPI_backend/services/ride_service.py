@@ -1,9 +1,31 @@
 from fastapi import HTTPException
 from datetime import datetime
+import os
+import json
+import pika
 from repositories.device_repository import DeviceRepository
 from repositories.ride_repository import RideRepository
 from repositories.telemetry_repository import TelemetryRepository
 from models.response_models import RideDetailsResponse, RideEvent, HeartRateMetrics, HRVMetrics
+
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+
+def publish_ride_end(ride_id: str, end_time: datetime):
+    params = pika.URLParameters(RABBITMQ_URL)
+    conn = pika.BlockingConnection(params)
+    ch = conn.channel()
+    ch.queue_declare(queue="ride.end", durable=True)
+    ch.basic_publish(
+        exchange="",
+        routing_key="ride.end",
+        body=json.dumps({
+            "ride_id": str(ride_id),
+            "end_time": end_time.isoformat()
+        }),
+        properties=pika.BasicProperties(delivery_mode=2)
+    )
+    conn.close()
+    print(f"[RABBITMQ] [INFO] Published ride.end ride_id={ride_id} end_time={end_time.isoformat()}")
 
 class RideService:
     @staticmethod
@@ -22,10 +44,9 @@ class RideService:
                 "message": "Ride already active"
             }
         
-    
         ride_id = RideRepository.create_ride(device_uuid, user_id)
         
-        print(f"✓ Started ride {ride_id} for device {device_id}")
+        print(f"[OK] Started ride {ride_id} for device {device_id}")
         
         return {
             "ride_id": str(ride_id),
@@ -34,50 +55,41 @@ class RideService:
     
     @staticmethod
     def end_ride(ride_id: str) -> dict:
-        ride = RideRepository.get_ride_by_id(ride_id)
-        if not ride or ride['status'] != 'active':
-            raise HTTPException(status_code=404, detail="Ride not found or already ended")
-        
         end_time = datetime.now()
-        start_time = ride['start_time']
-        duration_seconds = int((end_time - start_time).total_seconds())
-
-        stats = RideRepository.get_ride_stats(ride_id)
-        avg_hr = stats['avg_hr'] if stats else None
-        max_hr = stats['max_hr'] if stats else None
-        min_hr = stats['min_hr'] if stats else None
         
+        marked = RideRepository.mark_ride_ending(ride_id)
+        if not marked:
+            ride = RideRepository.get_ride_by_id(ride_id)
+            if not ride:
+                raise HTTPException(status_code=404, detail="Ride not found")
+            if ride['status'] == 'ending':
+                return {
+                    "success": True,
+                    "ride_id": ride_id,
+                    "message": "Ride end already in progress"
+                }
+            if ride['status'] == 'completed':
+                return {
+                    "success": True,
+                    "ride_id": ride_id,
+                    "message": "Ride already completed"
+                }
+            raise HTTPException(status_code=400, detail=f"Cannot end ride with status: {ride['status']}")
         
-        RideRepository.end_ride(ride_id, end_time, duration_seconds, avg_hr, max_hr, min_hr)
-        
-        event_stats = TelemetryRepository.get_drowsiness_event_stats(ride_id)
-        
-        total_drowsiness = event_stats['total_drowsiness_events']
-        total_microsleep = event_stats['total_microsleep_events']
-        max_score = event_stats['max_drowsiness_score']
-        avg_score = event_stats['avg_drowsiness_score']
-        
-        fatigue_score = min(100, int((total_drowsiness * 10) + (total_microsleep * 20)))
-        
-        RideRepository.create_ride_summary(
-            ride_id, fatigue_score, total_drowsiness, 
-            total_microsleep, max_score, avg_score
-        )
-        
-        print(f"✓ Ended ride {ride_id} - Duration: {duration_seconds}s, Fatigue: {fatigue_score}/100")
+        try:
+            publish_ride_end(ride_id, end_time)
+        except Exception as e:
+            print(f"[RABBITMQ] [ERROR] Failed to publish ride.end: {e}")
+            raise HTTPException(status_code=500, detail="Failed to queue ride completion")
         
         return {
             "success": True,
             "ride_id": ride_id,
-            "duration_seconds": duration_seconds,
-            "fatigue_score": fatigue_score,
-            "total_drowsiness_events": total_drowsiness,
-            "total_microsleep_events": total_microsleep
+            "message": "Ride end queued for processing"
         }
     
     @staticmethod
     def get_ride_details(ride_id: str) -> RideDetailsResponse:
-
         ride_data = RideRepository.get_ride_by_id(ride_id)
         
         if not ride_data:
@@ -85,7 +97,6 @@ class RideService:
         
         events_data = RideRepository.get_ride_events(ride_id)
         
-       
         events = [
             RideEvent(
                 timestamp=event['detected_at'].time() if event['detected_at'] else None,
@@ -96,7 +107,6 @@ class RideService:
             for event in events_data
         ]
         
-       
         return RideDetailsResponse(
             ride_id=ride_id,
             date=ride_data['start_time'].date() if ride_data['start_time'] else None,
@@ -109,7 +119,7 @@ class RideService:
                 min=ride_data['min_hr']
             ),
             hrv=HRVMetrics(
-                avg_rmssd=None,  
+                avg_rmssd=None,
                 lowest_rmssd=None,
                 baseline_rmssd=None,
                 deviation_pct=None
@@ -121,22 +131,19 @@ class RideService:
     
     @staticmethod
     def save_telemetry_batch(device_id: str, ride_id: str, telemetry: list) -> dict:
-      
         device = DeviceRepository.get_device_by_id(device_id)
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
         
         device_uuid = device['id']
         
-        # Save telemetry
         records_inserted = TelemetryRepository.save_telemetry_batch(
             device_uuid, ride_id, telemetry
         )
         
-        # Update last seen
         DeviceRepository.update_last_seen(device_uuid)
         
-        print(f"✓ Stored {records_inserted} telemetry entries for device {device_id}")
+        print(f"[OK] Stored {records_inserted} telemetry entries for device {device_id}")
         
         return {
             "success": True,
@@ -146,7 +153,6 @@ class RideService:
     
     @staticmethod
     def log_drowsiness_event(event_data: dict) -> dict:
-       
         device = DeviceRepository.get_device_by_id(event_data['device_id'])
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")

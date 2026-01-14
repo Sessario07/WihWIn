@@ -8,8 +8,25 @@
 #include <curl/curl.h>
 #include <stdbool.h>
 
-// ============== EC2 CLOUD CONFIGURATION ==============
-#define ADDRESS     "tcp://35.77.98.154:1883"
+
+#define ENV_LOCALHOST
+
+
+#ifdef ENV_LOCALHOST
+    #define MQTT_ADDRESS     "tcp://localhost:1883"
+    #define FASTAPI_BASE_URL "http://localhost:8000"
+    #define MQTT_USERNAME    "helmet"
+    #define MQTT_PASSWORD    "wihwin123"
+#endif
+
+#ifdef ENV_CLOUD
+    #define MQTT_ADDRESS     "tcp://35.77.98.154:1883"
+    #define FASTAPI_BASE_URL "http://35.77.98.154/api/fast"
+    #define MQTT_USERNAME    "helmet"
+    #define MQTT_PASSWORD    "WihWin_Mqtt_2024!Secure"
+#endif
+
+
 #define CLIENTID    "SmartHelmetSim"
 #define DEVICE_ID   "HELMET003"
 #define QOS         1
@@ -17,17 +34,10 @@
 #define ONBOARD_SAMPLES 12
 #define NORMAL_OPERATION_CYCLES 100
 
-// PPG Configuration
+
 #define PPG_SAMPLE_RATE 50
 #define PPG_BUFFER_SECONDS 5
 #define PPG_BUFFER_SIZE (PPG_SAMPLE_RATE * PPG_BUFFER_SECONDS)
-
-// MQTT Authentication (must match EC2 mosquitto password)
-#define MQTT_USERNAME "helmet"
-#define MQTT_PASSWORD "WihWin_Mqtt_2024!Secure"
-
-// FastAPI URL (EC2)
-#define FASTAPI_BASE_URL "http://35.77.98.154/api/fast"
 
 char TOPIC_TELE[128];
 char TOPIC_CMD[128];
@@ -256,14 +266,14 @@ void call_baseline_api(const char *device_id) {
             printf("Baseline API response: %s\n", response);
             
             if (strstr(response, "\"success\":true") || strstr(response, "\"success\": true")) {
-                printf("✓ Baseline computed and saved successfully!\n");
+                printf("[OK] Baseline computed and saved successfully!\n");
                 has_baseline = true;
                 parse_baseline_from_response(response);
             } else {
-                printf("✗ Baseline computation failed\n");
+                printf("[ERROR] Baseline computation failed\n");
             }
         } else {
-            printf("✗ API call failed: %s\n", curl_easy_strerror(res));
+            printf("[ERROR] API call failed: %s\n", curl_easy_strerror(res));
         }
         
         curl_slist_free_all(headers);
@@ -323,14 +333,14 @@ int main() {
     }
 
     printf("\nStep 2: Connecting to MQTT broker\n");
-    printf("Address: %s\n", ADDRESS);
+    printf("Address: %s\n", MQTT_ADDRESS);
     printf("Client ID: %s\n", CLIENTID);
     printf("Username: %s\n", MQTT_USERNAME);
     
     MQTTClient client;
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
     
-    int create_rc = MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    int create_rc = MQTTClient_create(&client, MQTT_ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
     if (create_rc != MQTTCLIENT_SUCCESS) {
         printf("Failed to create MQTT client. Error code: %d\n", create_rc);
         exit(EXIT_FAILURE);
@@ -340,7 +350,7 @@ int main() {
     conn_opts.cleansession = 1;
     conn_opts.username = MQTT_USERNAME;
     conn_opts.password = MQTT_PASSWORD;
-    conn_opts.connectTimeout = 30;  // 30 second timeout
+    conn_opts.connectTimeout = 30;  
 
     printf("Attempting connection...\n");
     int rc = MQTTClient_connect(client, &conn_opts);
@@ -359,12 +369,12 @@ int main() {
         }
         printf("\nTroubleshooting:\n");
         printf("1. Check if port 1883 is open on the server\n");
-        printf("2. Verify the server IP: %s\n", ADDRESS);
+        printf("2. Verify the server IP: %s\n", MQTT_ADDRESS);
         printf("3. Test with: mosquitto_sub -h 35.77.98.154 -p 1883 -u helmet -P 'WihWin_Mqtt_2024!Secure' -t test\n");
         MQTTClient_destroy(&client);
         exit(EXIT_FAILURE);
     }
-    printf("✓ Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
+    printf("[OK] Connected to MQTT broker (authenticated as '%s')\n", MQTT_USERNAME);
 
     MQTTClient_setCallbacks(client, NULL, NULL, messageArrivedCB, NULL);
     MQTTClient_subscribe(client, TOPIC_CMD, QOS);
@@ -433,7 +443,7 @@ int main() {
             
             onboard_count++;
             int progress = (onboard_count * 100) / ONBOARD_SAMPLES;
-            printf("📊 [%d/%d] %3d%% | Target HR=%.0f bpm | PPG samples=%d\n", 
+            printf("[PROGRESS] [%d/%d] %3d%% | Target HR=%.0f bpm | PPG samples=%d\n", 
                    onboard_count, ONBOARD_SAMPLES, progress, hr, PPG_BUFFER_SIZE);
         }
         
@@ -534,6 +544,6 @@ int main() {
     MQTTClient_disconnect(client, 10000);
     MQTTClient_destroy(&client);
     
-    printf("✓ Shutdown complete\n\n");
+    printf("[OK] Shutdown complete\n\n");
     return 0;
 }

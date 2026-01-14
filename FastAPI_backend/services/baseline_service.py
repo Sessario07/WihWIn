@@ -6,7 +6,6 @@ from repositories.device_repository import DeviceRepository
 from repositories.baseline_repository import BaselineRepository
 
 def safe_float(value, default=0.0):
-    """Convert value to float, returning default if NaN or infinite"""
     try:
         f = float(value)
         if math.isnan(f) or math.isinf(f):
@@ -18,12 +17,10 @@ def safe_float(value, default=0.0):
 class BaselineService:
     @staticmethod
     def compute_baseline(device_id: str, samples: list, sample_rate: int = 50) -> dict:
-        
         try:
-            print(f"\n🧮 Computing baseline for device {device_id}")
+            print(f"\n[BASELINE] Computing baseline for device {device_id}")
             print(f"   Received {len(samples)} PPG samples at {sample_rate} Hz")
             
-            # Collect HRV metrics from each sample
             hr_values = []
             sdnn_values = []
             rmssd_values = []
@@ -33,25 +30,22 @@ class BaselineService:
             
             for i, ppg_data in enumerate(samples):
                 try:
-                    # Process PPG to find peaks
                     signals, info = nk.ppg_process(ppg_data, sampling_rate=sample_rate)
                     peaks = info["PPG_Peaks"]
                     
                     if len(peaks) < 2:
-                        print(f"   ⚠ Warning: Sample {i+1} has insufficient peaks, skipping...")
+                        print(f"   [WARN] Sample {i+1} has insufficient peaks, skipping...")
                         continue
                     
-                    # Calculate HR from this sample
                     peak_intervals = []
                     for j in range(1, len(peaks)):
-                        interval = (peaks[j] - peaks[j-1]) / sample_rate  # in seconds
-                        peak_intervals.append(60.0 / interval)  # convert to BPM
+                        interval = (peaks[j] - peaks[j-1]) / sample_rate
+                        peak_intervals.append(60.0 / interval)
                     
                     if peak_intervals:
                         hr = sum(peak_intervals) / len(peak_intervals)
                         hr_values.append(hr)
                     
-                    # Compute HRV metrics for this sample
                     try:
                         hrv_time = nk.hrv_time(peaks, sampling_rate=sample_rate, show=False)
                         if 'HRV_SDNN' in hrv_time.columns:
@@ -61,17 +55,15 @@ class BaselineService:
                         if 'HRV_pNN50' in hrv_time.columns:
                             pnn50_values.append(safe_float(hrv_time['HRV_pNN50'].iloc[0], 20.0))
                     except Exception as e:
-                        print(f"   ⚠ Warning: Time domain computation failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Time domain computation failed for sample {i+1}: {e}")
                     
-                    # Frequency domain
                     try:
                         hrv_freq = nk.hrv_frequency(peaks, sampling_rate=sample_rate, show=False)
                         if 'HRV_LFHF' in hrv_freq.columns:
                             lf_hf_values.append(safe_float(hrv_freq['HRV_LFHF'].iloc[0], 1.5))
                     except Exception as e:
-                        print(f"   ⚠ Warning: Frequency domain failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Frequency domain failed for sample {i+1}: {e}")
                     
-                    # Nonlinear domain
                     try:
                         hrv_nonlinear = nk.hrv_nonlinear(peaks, sampling_rate=sample_rate, show=False)
                         if 'HRV_SD1' in hrv_nonlinear.columns and 'HRV_SD2' in hrv_nonlinear.columns:
@@ -80,19 +72,17 @@ class BaselineService:
                             if sd2 != 0:
                                 sd1_sd2_values.append(sd1 / sd2)
                     except Exception as e:
-                        print(f"   ⚠ Warning: Nonlinear domain failed for sample {i+1}: {e}")
+                        print(f"   [WARN] Nonlinear domain failed for sample {i+1}: {e}")
                     
                 except Exception as e:
-                    print(f"   ⚠ Warning: Failed to process sample {i+1}: {e}")
+                    print(f"   [WARN] Failed to process sample {i+1}: {e}")
                     continue
             
-            # Check if we have enough valid samples
             if len(hr_values) < 3:
                 raise HTTPException(status_code=400, detail="Insufficient valid PPG samples to compute baseline")
             
-            print(f"   ✓ Successfully processed {len(hr_values)} out of {len(samples)} samples")
+            print(f"   [OK] Successfully processed {len(hr_values)} out of {len(samples)} samples")
             
-            # Aggregate metrics from all samples
             mean_hr = safe_float(np.mean(hr_values), 70.0)
             sdnn = safe_float(np.mean(sdnn_values), 50.0) if sdnn_values else 50.0
             rmssd = safe_float(np.mean(rmssd_values), 40.0) if rmssd_values else 40.0
@@ -100,10 +90,8 @@ class BaselineService:
             lf_hf_ratio = safe_float(np.mean(lf_hf_values), 1.5) if lf_hf_values else 1.5
             sd1_sd2_ratio = safe_float(np.mean(sd1_sd2_values), 0.5) if sd1_sd2_values else 0.5
             
-            # Placeholder for accel variance (simulator doesn't send accel in baseline)
             accel_var = 0.0
             
-            # HR variability
             hr_diffs = np.diff(hr_values) if len(hr_values) > 1 else []
             hr_decay_rate = safe_float(np.mean(np.abs(hr_diffs)), 0.0) if len(hr_diffs) > 0 else 0.0
             
@@ -118,7 +106,7 @@ class BaselineService:
                 'hr_decay_rate': hr_decay_rate
             }
             
-            print(f"   ✓ Computed metrics:")
+            print(f"   [OK] Computed metrics:")
             print(f"     Mean HR: {mean_hr:.2f} bpm")
             print(f"     SDNN: {sdnn:.2f} ms")
             print(f"     RMSSD: {rmssd:.2f} ms")
@@ -126,7 +114,6 @@ class BaselineService:
             print(f"     LF/HF: {lf_hf_ratio:.2f}")
             print(f"     SD1/SD2: {sd1_sd2_ratio:.2f}")
             
-            # Save to database
             device = DeviceRepository.get_device_by_id(device_id)
             if not device:
                 raise HTTPException(status_code=404, detail="Device not found")
@@ -136,13 +123,13 @@ class BaselineService:
             BaselineRepository.save_baseline(device_uuid, metrics)
             DeviceRepository.mark_onboarded(device_uuid)
             
-            print(f"✓ Baseline saved to database")
-            print(f"✓ Device marked as onboarded\n")
+            print(f"[OK] Baseline saved to database")
+            print(f"[OK] Device marked as onboarded\n")
             
             return metrics
             
         except Exception as e:
-            print(f"❌ Error computing baseline: {e}")
+            print(f"[ERROR] Error computing baseline: {e}")
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Error computing baseline: {str(e)}")

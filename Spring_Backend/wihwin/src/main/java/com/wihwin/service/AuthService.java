@@ -18,24 +18,15 @@ import java.time.LocalDateTime;
 public class AuthService {
 
     private final UserRepository userRepository;
-    private final CustomerProfileRepository customerProfileRepository;
-    private final DoctorProfileRepository doctorProfileRepository;
-    private final DeviceRepository deviceRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider tokenProvider;
 
     public AuthService(UserRepository userRepository,
-                      CustomerProfileRepository customerProfileRepository,
-                      DoctorProfileRepository doctorProfileRepository,
-                      DeviceRepository deviceRepository,
                       PasswordEncoder passwordEncoder,
                       AuthenticationManager authenticationManager,
                       JwtTokenProvider tokenProvider) {
         this.userRepository = userRepository;
-        this.customerProfileRepository = customerProfileRepository;
-        this.doctorProfileRepository = doctorProfileRepository;
-        this.deviceRepository = deviceRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.tokenProvider = tokenProvider;
@@ -44,7 +35,7 @@ public class AuthService {
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("Username is already taken");
+            throw new RuntimeException("Username already taken");
         }
 
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -84,75 +75,5 @@ public class AuthService {
         userRepository.save(user);
 
         return new AuthResponse(jwt, user.getId(), user.getUsername(), user.getEmail(), user.getRole());
-    }
-
-    @Transactional
-    public ApiResponse createCustomerProfile(CustomerProfileRequest request, User user) {
-        if (!user.getRole().equals("customer")) {
-            throw new RuntimeException("Only customers can create customer profiles");
-        }
-
-        CustomerProfile profile = new CustomerProfile();
-        profile.setUser(user);
-        profile.setBloodType(request.getBloodType());
-        profile.setAllergies(request.getAllergies());
-        profile.setPreExistingConditions(request.getPreExistingConditions());
-        profile.setCurrentMedications(request.getCurrentMedications());
-        profile.setRecentMedicalHistory(request.getRecentMedicalHistory());
-        profile.setAdvanceDirectives(request.getAdvanceDirectives());
-        profile.setEmergencyContactName(request.getEmergencyContactName());
-        profile.setEmergencyContactPhone(request.getEmergencyContactPhone());
-
-        customerProfileRepository.save(profile);
-
-        return new ApiResponse(true, "Customer profile created successfully");
-    }
-
-    @Transactional
-    public ApiResponse createDoctorProfile(DoctorProfileRequest request, User user) {
-        if (!user.getRole().equals("doctor")) {
-            throw new RuntimeException("Only doctors can create doctor profiles");
-        }
-
-        DoctorProfile profile = new DoctorProfile();
-        profile.setUser(user);
-        profile.setHospitalName(request.getHospitalName());
-        profile.setLat(request.getLat());
-        profile.setLon(request.getLon());
-        profile.setSpecialization(request.getSpecialization());
-        profile.setLicenseNumber(request.getLicenseNumber());
-
-        doctorProfileRepository.save(profile);
-
-        return new ApiResponse(true, "Doctor profile created successfully");
-    }
-
-    @Transactional
-    public ApiResponse registerDevice(DeviceRegisterRequest request, User user) {
-        if (!user.getRole().equals("customer")) {
-            throw new RuntimeException("Only customers can register devices");
-        }
-
-        // Check if device exists
-        Device device = deviceRepository.findByDeviceId(request.getDeviceId())
-                .orElse(null);
-
-        if (device == null) {
-            throw new RuntimeException("Device not found. Please ensure the device is initialized.");
-        }
-
-        if (device.getUser() != null) {
-            throw new RuntimeException("Device is already registered to another user");
-        }
-
-        // Check if user already has a device
-        deviceRepository.findByUserId(user.getId()).ifPresent(existingDevice -> {
-            throw new RuntimeException("User already has a registered device");
-        });
-
-        device.setUser(user);
-        deviceRepository.save(device);
-
-        return new ApiResponse(true, "Device registered successfully");
     }
 }

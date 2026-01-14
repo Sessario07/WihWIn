@@ -4,11 +4,8 @@ services:
     container_name: nginx_proxy
     ports:
       - "80:80"
-      - "443:443"  # HTTPS port
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certbot/conf:/etc/letsencrypt:ro  # SSL certificates
-      - ./certbot/www:/var/www/certbot:ro   # Let's Encrypt challenge
     depends_on:
       - spring
       - fastapi
@@ -19,13 +16,15 @@ services:
   fastapi:
     build: ./FastAPI_backend
     container_name: fastapi_app
-    # No ports exposed - only accessible via Nginx
     expose:
       - "8000"
     environment:
       DB_URL: ${DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-yesyes123}@db:5432/${POSTGRES_DB:-Wihwin}}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
     depends_on:
       db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - wihwin-network
@@ -34,7 +33,6 @@ services:
   spring:
     build: ./Spring_Backend/wihwin
     container_name: spring_backend
-    # No ports exposed - only accessible via Nginx
     expose:
       - "8080"
     environment:
@@ -55,6 +53,7 @@ services:
     build: ./Worker
     container_name: helmet_worker
     environment:
+      PYTHONUNBUFFERED: 1
       FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_USER: ${MQTT_USER:-helmet}
@@ -66,11 +65,25 @@ services:
       - wihwin-network
     restart: unless-stopped
 
+  ride-aggregator:
+    build: ./RideAggregator
+    container_name: ride_aggregator
+    environment:
+      DB_URL: ${DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-yesyes123}@db:5432/${POSTGRES_DB:-Wihwin}}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - wihwin-network
+    restart: unless-stopped
+
   db:
     image: postgres:15-alpine
     container_name: postgres_db
     restart: always
-    # No ports exposed - internal only
     expose:
       - "5432"
     environment:
@@ -101,15 +114,27 @@ services:
       - wihwin-network
     restart: unless-stopped
 
-  certbot:
-    image: certbot/certbot
-    container_name: certbot
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    hostname: rabbitmq
+    expose:
+      - "5672"
+    ports:
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     volumes:
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - wihwin-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 networks:
   wihwin-network:
@@ -117,3 +142,4 @@ networks:
 
 volumes:
   pgdata:
+  rabbitmq_data:
