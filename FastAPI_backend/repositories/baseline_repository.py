@@ -5,7 +5,6 @@ from uuid import UUID
 class BaselineRepository:   
     @staticmethod
     def get_latest_baseline(device_uuid: UUID) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -22,7 +21,6 @@ class BaselineRepository:
     
     @staticmethod
     def save_baseline(device_uuid: UUID, metrics: Dict) -> None:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -44,7 +42,6 @@ class BaselineRepository:
     
     @staticmethod
     def get_user_baseline(user_id: str) -> Optional[Dict]:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -61,7 +58,6 @@ class BaselineRepository:
     
     @staticmethod
     def get_user_baseline_full(user_id: str) -> Optional[Dict]:
-        """Get full baseline metrics for a user"""
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -79,7 +75,6 @@ class BaselineRepository:
     
     @staticmethod
     def delete_user_baseline(user_id: str) -> bool:
-        """Delete all baseline metrics for a user"""
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""

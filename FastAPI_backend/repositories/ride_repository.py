@@ -6,7 +6,6 @@ from datetime import datetime
 class RideRepository:
     @staticmethod
     def get_ride_by_id(ride_id: str) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -38,7 +37,6 @@ class RideRepository:
     
     @staticmethod
     def get_ride_events(ride_id: str) -> List[Dict]:
-      
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -63,7 +61,6 @@ class RideRepository:
     
     @staticmethod
     def get_active_ride(device_uuid: UUID) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -78,7 +75,6 @@ class RideRepository:
     
     @staticmethod
     def create_ride(device_uuid: UUID, user_id: Optional[UUID]) -> UUID:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -92,7 +88,6 @@ class RideRepository:
     @staticmethod
     def end_ride(ride_id: str, end_time: datetime, duration_seconds: int, 
                  avg_hr: float, max_hr: float, min_hr: float) -> None:
-      
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -104,11 +99,6 @@ class RideRepository:
     
     @staticmethod
     def mark_ride_ending(ride_id: str) -> bool:
-        """
-        Atomically mark ride status as 'ending' only if currently 'active'.
-        Returns True if status was changed, False otherwise.
-        Used for async processing to prevent double-publish.
-        """
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -134,15 +124,9 @@ class RideRepository:
         max_score: Optional[int],
         avg_score: Optional[float]
     ) -> bool:
-        """
-        Complete ride and create summary in a single transaction.
-        Idempotent: skips if ride is already completed.
-        Returns True if completed, False if already done or not found.
-        """
         with get_db_connection() as conn:
             cur = conn.cursor()
             
-            # Check current status first (idempotency)
             cur.execute("SELECT status FROM rides WHERE id = %s", (ride_id,))
             result = cur.fetchone()
             
@@ -150,14 +134,11 @@ class RideRepository:
                 return False
             
             if result['status'] == 'completed':
-                # Already completed, skip (idempotent)
                 return True
             
             if result['status'] != 'ending':
-                # Unexpected state
                 return False
             
-            # Update ride to completed
             cur.execute("""
                 UPDATE rides
                 SET end_time = %s, duration_seconds = %s, avg_hr = %s,
@@ -165,7 +146,6 @@ class RideRepository:
                 WHERE id = %s AND status = 'ending'
             """, (end_time, duration_seconds, avg_hr, max_hr, min_hr, ride_id))
             
-            # Insert summary (use ON CONFLICT for idempotency)
             cur.execute("""
                 INSERT INTO ride_summaries 
                 (ride_id, fatigue_score, total_drowsiness_events, total_microsleep_events,
@@ -201,7 +181,6 @@ class RideRepository:
     
     @staticmethod
     def get_user_rides(user_id: str, limit: int, offset: int) -> Tuple[List[Dict], int]:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             
@@ -210,7 +189,6 @@ class RideRepository:
                 (user_id,)
             )
             total = cur.fetchone()['count']
-            
             
             cur.execute("""
                 SELECT 
@@ -238,7 +216,6 @@ class RideRepository:
     def create_ride_summary(ride_id: str, fatigue_score: int, 
                            total_drowsiness: int, total_microsleep: int,
                            max_score: int, avg_score: float) -> None:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""

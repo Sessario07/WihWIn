@@ -8,4 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "ride_aggregator.py"]
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-u", "ride_aggregator.py"]

@@ -11,7 +11,6 @@ from models.response_models import RideDetailsResponse, RideEvent, HeartRateMetr
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 def publish_ride_end(ride_id: str, end_time: datetime):
-    """Publish ride end message to RabbitMQ for async processing"""
     params = pika.URLParameters(RABBITMQ_URL)
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
@@ -23,7 +22,7 @@ def publish_ride_end(ride_id: str, end_time: datetime):
             "ride_id": str(ride_id),
             "end_time": end_time.isoformat()
         }),
-        properties=pika.BasicProperties(delivery_mode=2)  # persistent
+        properties=pika.BasicProperties(delivery_mode=2)
     )
     conn.close()
     print(f"[RABBITMQ] [INFO] Published ride.end ride_id={ride_id} end_time={end_time.isoformat()}")
@@ -56,19 +55,10 @@ class RideService:
     
     @staticmethod
     def end_ride(ride_id: str) -> dict:
-        """
-        End ride asynchronously:
-        1. Atomically mark ride as 'ending'
-        2. Publish message to RabbitMQ with end_time
-        3. Return immediately (aggregation happens in worker)
-        """
-        # Capture end_time NOW (before any async processing)
         end_time = datetime.now()
         
-        # Atomically mark ride as ending (prevents double-publish)
         marked = RideRepository.mark_ride_ending(ride_id)
         if not marked:
-            # Check if ride exists and its current status
             ride = RideRepository.get_ride_by_id(ride_id)
             if not ride:
                 raise HTTPException(status_code=404, detail="Ride not found")
@@ -86,13 +76,10 @@ class RideService:
                 }
             raise HTTPException(status_code=400, detail=f"Cannot end ride with status: {ride['status']}")
         
-        # Publish to RabbitMQ for async aggregation (include end_time)
         try:
             publish_ride_end(ride_id, end_time)
         except Exception as e:
             print(f"[RABBITMQ] [ERROR] Failed to publish ride.end: {e}")
-            # Note: ride is marked 'ending' but message failed
-            # In production, use transactional outbox pattern
             raise HTTPException(status_code=500, detail="Failed to queue ride completion")
         
         return {
@@ -132,7 +119,7 @@ class RideService:
                 min=ride_data['min_hr']
             ),
             hrv=HRVMetrics(
-                avg_rmssd=None,  
+                avg_rmssd=None,
                 lowest_rmssd=None,
                 baseline_rmssd=None,
                 deviation_pct=None
@@ -150,12 +137,10 @@ class RideService:
         
         device_uuid = device['id']
         
-        # Save telemetry
         records_inserted = TelemetryRepository.save_telemetry_batch(
             device_uuid, ride_id, telemetry
         )
         
-        # Update last seen
         DeviceRepository.update_last_seen(device_uuid)
         
         print(f"[OK] Stored {records_inserted} telemetry entries for device {device_id}")

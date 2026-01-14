@@ -40,7 +40,7 @@ jobs:
         run: |
           pytest tests/ -v --tb=short -x
 
-  # Python Worker Tests
+
   worker-tests:
     name: Worker Unit Tests
     runs-on: ubuntu-latest
@@ -72,7 +72,6 @@ jobs:
         run: |
           pytest tests/ -v --tb=short -x
 
-  # Spring Boot Tests
   spring-boot-tests:
     name: Spring Boot Unit Tests
     runs-on: ubuntu-latest

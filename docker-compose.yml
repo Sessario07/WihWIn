@@ -53,6 +53,7 @@ services:
     build: ./Worker
     container_name: helmet_worker
     environment:
+      PYTHONUNBUFFERED: 1
       FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_USER: ${MQTT_USER:-helmet}

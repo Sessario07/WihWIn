@@ -26,7 +26,6 @@ def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
         print(f"[WARN] ride_id={ride_id} has invalid status={ride['status']}, discarding")
         return 'invalid_state'
     
-  
     if end_time_from_msg:
         end_time = end_time_from_msg
     elif ride['end_time']:
@@ -37,22 +36,18 @@ def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
     start_time = ride['start_time']
     duration_seconds = int((end_time - start_time).total_seconds())
     
- 
     stats = RideAggregatorRepository.get_ride_stats(ride_id)
     avg_hr = float(stats['avg_hr']) if stats and stats['avg_hr'] else None
     max_hr = float(stats['max_hr']) if stats and stats['max_hr'] else None
     min_hr = float(stats['min_hr']) if stats and stats['min_hr'] else None
-    
 
     event_stats = RideAggregatorRepository.get_drowsiness_event_stats(ride_id)
     total_drowsiness = event_stats['total_drowsiness_events']
     total_microsleep = event_stats['total_microsleep_events']
     max_score = event_stats['max_drowsiness_score']
     avg_score = float(event_stats['avg_drowsiness_score']) if event_stats['avg_drowsiness_score'] else None
-    
 
     fatigue_score = min(100, int((total_drowsiness * 10) + (total_microsleep * 20)))
-    
 
     result = RideAggregatorRepository.complete_ride_with_summary(
         ride_id=ride_id,

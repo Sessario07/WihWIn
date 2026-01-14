@@ -6,7 +6,7 @@ from repositories.baseline_repository import BaselineRepository
 class AnalyticsService: 
     @staticmethod
     def get_daily_hrv_trend(user_id: str, days: int = 30) -> dict:
-        
+        days = int(days)
         baseline_data = BaselineRepository.get_user_baseline(user_id)
         baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         
@@ -21,7 +21,7 @@ class AnalyticsService:
                 FROM rides r
                 JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
                 WHERE r.user_id = %s 
-                    AND r.start_time >= CURRENT_DATE - INTERVAL '%s days'
+                    AND r.start_time >= CURRENT_DATE - make_interval(days := %s)
                     AND r.status = 'completed'
                 GROUP BY ride_date
                 ORDER BY ride_date ASC
@@ -29,12 +29,10 @@ class AnalyticsService:
             
             rows = cur.fetchall()
         
-        
         data = []
         rmssd_values = [float(row['avg_rmssd']) if row['avg_rmssd'] else baseline_rmssd for row in rows]
         
         for i, row in enumerate(rows):
-            
             start_idx = max(0, i - 6)
             window = rmssd_values[start_idx:i+1]
             moving_avg = sum(window) / len(window) if window else baseline_rmssd
@@ -56,7 +54,6 @@ class AnalyticsService:
     
     @staticmethod
     def get_weekly_fatigue_score(user_id: str) -> dict:
-        
         baseline_data = BaselineRepository.get_user_baseline(user_id)
         baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         
@@ -69,7 +66,7 @@ class AnalyticsService:
                 FROM rides r
                 JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
                 WHERE r.user_id = %s 
-                    AND r.start_time >= CURRENT_DATE - INTERVAL '6 days'
+                    AND r.start_time >= CURRENT_DATE - make_interval(days := 6)
                     AND r.status = 'completed'
                 GROUP BY ride_date
                 ORDER BY ride_date ASC
@@ -77,14 +74,12 @@ class AnalyticsService:
             
             rows = cur.fetchall()
         
-       
         scores = []
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         
         for row in rows:
             avg_rmssd = float(row['avg_rmssd']) if row['avg_rmssd'] else baseline_rmssd
             deviation_pct = abs(((baseline_rmssd - avg_rmssd) / baseline_rmssd) * 100)
-            
             
             if deviation_pct < 20:
                 color = "green"
@@ -118,7 +113,7 @@ class AnalyticsService:
     
     @staticmethod
     def get_hrv_heatmap(user_id: str, days: int = 7) -> dict:
-       
+        days = int(days)
         baseline_data = BaselineRepository.get_user_baseline(user_id)
         baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         
@@ -135,7 +130,7 @@ class AnalyticsService:
                 LEFT JOIN drowsiness_events de ON de.ride_id = r.id 
                     AND DATE_TRUNC('hour', de.detected_at) = DATE_TRUNC('hour', t.timestamp)
                 WHERE r.user_id = %s 
-                    AND t.timestamp >= CURRENT_DATE - INTERVAL '%s days'
+                    AND t.timestamp >= CURRENT_DATE - make_interval(days := %s)
                 GROUP BY date, hour
                 ORDER BY date ASC, hour ASC
             """, (user_id, days))
@@ -151,9 +146,7 @@ class AnalyticsService:
             avg_rmssd = float(row['avg_rmssd']) if row['avg_rmssd'] else baseline_rmssd
             event_count = row['event_count'] or 0
             
-           
             deviation_pct = abs(((baseline_rmssd - avg_rmssd) / baseline_rmssd) * 100)
-            
 
             if deviation_pct < 20:
                 color = "green"
@@ -190,6 +183,7 @@ class AnalyticsService:
     
     @staticmethod
     def get_lf_hf_trend(user_id: str, days: int = 30) -> dict:
+        days = int(days)
         threshold = 2.5
         
         with get_db_connection() as conn:
@@ -204,7 +198,7 @@ class AnalyticsService:
                 FROM rides r
                 JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
                 WHERE r.user_id = %s 
-                    AND r.start_time >= CURRENT_DATE - INTERVAL '%s days'
+                    AND r.start_time >= CURRENT_DATE - make_interval(days := %s)
                     AND r.status = 'completed'
                     AND t.lf_hf_ratio IS NOT NULL
                 GROUP BY r.id, r.start_time, r.duration_seconds
@@ -241,7 +235,6 @@ class AnalyticsService:
         with get_db_connection() as conn:
             cur = conn.cursor()
             
-            
             cur.execute("""
                 SELECT 
                     EXTRACT(HOUR FROM de.detected_at) as hour_of_day,
@@ -256,7 +249,6 @@ class AnalyticsService:
             
             hourly_rows = cur.fetchall()
             
-           
             cur.execute("""
                 SELECT 
                     EXTRACT(DOW FROM de.detected_at) as day_of_week,

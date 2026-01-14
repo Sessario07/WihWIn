@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import time
 import math
+import numpy as np
+
+if not hasattr(np, 'trapz'):
+    np.trapz = np.trapezoid
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
@@ -14,30 +18,18 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "helmet")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "wihwin123")
 
-# Subscribe to all device topics
 TOPIC_TELEMETRY = "helmet/+/telemetry"
 TOPIC_BASELINE = "helmet/+/baseline"
 
-# Baseline cache: device_id -> baseline_metrics
 baseline_cache = {}
-
-# Telemetry buffer: device_id -> list of telemetry entries
 telemetry_buffer = defaultdict(list)
 last_flush_time = {}
-
-# Active ride tracking: device_id -> ride_id
 active_rides = {}
-
-# Track last telemetry time for auto-end: device_id -> timestamp
 last_telemetry_time = {}
 
-# Flush telemetry to database every 2 minutes
-FLUSH_INTERVAL_SECONDS = 120  # 2 minutes
+FLUSH_INTERVAL_SECONDS = 120
+RIDE_TIMEOUT_SECONDS = 60
 
-# Auto-end ride timeout (5 minutes of no telemetry)
-RIDE_TIMEOUT_SECONDS = 3600  # 1 hour
-
-# General baseline for devices without personalized baseline
 GENERAL_BASELINE = {
     "mean_hr": 70.0,
     "sdnn": 50.0,
@@ -62,14 +54,8 @@ def sanitize_metrics(metrics):
 def compute_hrv(ppg_data, sampling_rate):
     try:
         signals, info = nk.ppg_process(ppg_data, sampling_rate=sampling_rate)
-        
-        # Time-domain metrics
         hrv_time = nk.hrv_time(info["PPG_Peaks"], sampling_rate=sampling_rate)
-        
-        # Frequency-domain metrics
         hrv_freq = nk.hrv_frequency(info["PPG_Peaks"], sampling_rate=sampling_rate)
-        
-        # Nonlinear metrics
         hrv_nonlinear = nk.hrv_nonlinear(info["PPG_Peaks"], sampling_rate=sampling_rate)
         
         return {
@@ -86,59 +72,52 @@ def compute_hrv(ppg_data, sampling_rate):
         return None
 
 def assess_drowsiness(current_metrics, baseline_metrics):
-
     drowsiness_score = 0
     alerts = []
     
-    # 1. SDNN Check (weight: 3) - STRICTER: Must drop 50% for microsleep, 35% for drowsy
-    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.50:  # 50% drop (was 35%)
+    if current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.50:
         drowsiness_score += 3
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
-    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.65:  # 35% drop (was 20%)
+    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.65:
         drowsiness_score += 2
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
-    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.75:  # 25% drop (NEW)
+    elif current_metrics["sdnn"] < baseline_metrics["sdnn"] * 0.75:
         drowsiness_score += 1
         alerts.append(f"SDNN dropped {((baseline_metrics['sdnn'] - current_metrics['sdnn']) / baseline_metrics['sdnn'] * 100):.1f}%")
     
-    # 2. RMSSD Check (weight: 3) - STRICTER: Must drop 55% for microsleep, 40% for drowsy
-    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.45:  # 55% drop (was 40%)
+    if current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.45:
         drowsiness_score += 3
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
-    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:  # 40% drop (was 25%)
+    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.60:
         drowsiness_score += 2
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
-    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.70:  # 30% drop (NEW)
+    elif current_metrics["rmssd"] < baseline_metrics["rmssd"] * 0.70:
         drowsiness_score += 1
         alerts.append(f"RMSSD dropped {((baseline_metrics['rmssd'] - current_metrics['rmssd']) / baseline_metrics['rmssd'] * 100):.1f}%")
     
-    # 3. pNN50 Check (weight: 2) - STRICTER: Must drop 60% for microsleep, 45% for drowsy
-    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.40:  # 60% drop (was 45%)
+    if current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.40:
         drowsiness_score += 2
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
-    elif current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.55:  # 45% drop (was 30%)
+    elif current_metrics["pnn50"] < baseline_metrics["pnn50"] * 0.55:
         drowsiness_score += 1
         alerts.append(f"pNN50 dropped {((baseline_metrics['pnn50'] - current_metrics['pnn50']) / baseline_metrics['pnn50'] * 100):.1f}%")
     
-    # 4. LF/HF Ratio Check (weight: 2) - STRICTER: Must increase 70% for microsleep, 50% for drowsy
-    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.70:  # 70% increase (was 50%)
+    if current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.70:
         drowsiness_score += 2
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
-    elif current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.50:  # 50% increase (was 30%)
+    elif current_metrics["lf_hf_ratio"] > baseline_metrics["lf_hf_ratio"] * 1.50:
         drowsiness_score += 1
         alerts.append(f"LF/HF increased {((current_metrics['lf_hf_ratio'] - baseline_metrics['lf_hf_ratio']) / baseline_metrics['lf_hf_ratio'] * 100):.1f}%")
     
-    # 5. SD1/SD2 Ratio Check (weight: 1) - STRICTER: Must deviate 60%
     ratio_diff = abs(current_metrics["sd1_sd2_ratio"] - baseline_metrics["sd1_sd2_ratio"])
-    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.60:  # 60% deviation (was 40%)
+    if ratio_diff > baseline_metrics["sd1_sd2_ratio"] * 0.60:
         drowsiness_score += 1
         alerts.append(f"SD1/SD2 ratio deviated by {(ratio_diff / baseline_metrics['sd1_sd2_ratio'] * 100):.1f}%")
     
-    # Determine status label - MUCH STRICTER THRESHOLDS
-    if drowsiness_score >= 11:  # Raised from 9 to 11 (maximum possible score)
+    if drowsiness_score >= 11:
         status_label = "MICROSLEEP"
         should_alert = True
-    elif drowsiness_score >= 8:  # Raised from 6 to 8
+    elif drowsiness_score >= 8:
         status_label = "DROWSY"
         should_alert = True
     else:
@@ -188,7 +167,7 @@ def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv
             timeout=5
         )
     except Exception as e:
-        print(f"[[ERROR] Error logging drowsiness event: {e}")
+        print(f"[ERROR] Error logging drowsiness event: {e}")
 
 def flush_telemetry_buffer(device_id):
     if device_id not in telemetry_buffer or len(telemetry_buffer[device_id]) == 0:
@@ -259,13 +238,11 @@ def end_ride_if_timeout(device_id):
             print(f"[RIDE] [ERROR] Error ending ride: {e}")
 
 def check_all_rides_timeout():
-    """Check all active rides for timeout"""
     devices_to_check = list(active_rides.keys())
     for device_id in devices_to_check:
         end_ride_if_timeout(device_id)
 
 def on_message_baseline(client, userdata, msg):
-    """Handle baseline messages from devices"""
     try:
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
@@ -290,53 +267,47 @@ def on_message_baseline(client, userdata, msg):
         traceback.print_exc()
 
 def on_message_telemetry(client, userdata, msg):
-    """Handle telemetry messages from devices"""
     try:
         topic_parts = msg.topic.split('/')
         device_id = topic_parts[1]
         
         payload = json.loads(msg.payload.decode())
         
-        ppg_data = payload.get("ppg")  # Raw PPG array from simulator
+        ppg_data = payload.get("ppg")
         sample_rate = payload.get("sample_rate", 50)
         lat = payload.get("lat")
         lon = payload.get("lon")
         
-        # If no PPG data, skip processing
         if not ppg_data:
             print(f"[{device_id}] [WARN] No PPG data in payload, skipping...")
             return
         
-        # Get or create active ride
         ride_id = get_or_create_active_ride(device_id)
         
-        # Get baseline (from cache or use general)
         baseline = baseline_cache.get(device_id, GENERAL_BASELINE)
         using_general = device_id not in baseline_cache
         
         if using_general:
             print(f"[{device_id}] [WARN] Using general baseline (device not onboarded)")
         
-        # Process PPG data to extract HRV metrics and HR
         hrv_metrics = compute_hrv(ppg_data, sample_rate)
-        hrv_metrics = sanitize_metrics(hrv_metrics)
         
         if hrv_metrics is None:
             print(f"[{device_id}] [ERROR] HRV computation failed, skipping...")
             return
         
-        # Extract heart rate from PPG peaks
+        hrv_metrics = sanitize_metrics(hrv_metrics)
+        
         try:
             signals, info = nk.ppg_process(ppg_data, sampling_rate=sample_rate)
             peaks = info["PPG_Peaks"]
             if len(peaks) > 1:
-                # Calculate HR from peak intervals
                 peak_intervals = []
                 for i in range(1, len(peaks)):
-                    interval = (peaks[i] - peaks[i-1]) / sample_rate  # in seconds
-                    peak_intervals.append(60.0 / interval)  # convert to BPM
+                    interval = (peaks[i] - peaks[i-1]) / sample_rate
+                    peak_intervals.append(60.0 / interval)
                 hr = sum(peak_intervals) / len(peak_intervals)
-                ibi_ms = (60000.0 / hr)  # Inter-beat interval in ms
+                ibi_ms = (60000.0 / hr)
             else:
                 hr = baseline.get("mean_hr", 70.0)
                 ibi_ms = 60000.0 / hr
@@ -345,13 +316,10 @@ def on_message_telemetry(client, userdata, msg):
             hr = baseline.get("mean_hr", 70.0)
             ibi_ms = 60000.0 / hr
         
-        # Add HR to metrics
         hrv_metrics["hr"] = hr
         
-        # Assess drowsiness
         should_alert, drowsiness_score, status_label, alerts = assess_drowsiness(hrv_metrics, baseline)
         
-        # Buffer telemetry with computed HRV metrics for batch upload
         telemetry_buffer[device_id].append({
             "timestamp": datetime.now().isoformat(),
             "hr": hr,
@@ -360,14 +328,13 @@ def on_message_telemetry(client, userdata, msg):
             "rmssd": hrv_metrics["rmssd"],
             "pnn50": hrv_metrics["pnn50"],
             "lf_hf_ratio": hrv_metrics["lf_hf_ratio"],
-            "accel_x": None,  # Accel sent separately
+            "accel_x": None,
             "accel_y": None,
             "accel_z": None,
             "lat": lat,
             "lon": lon
         })
         
-        # Check if we need to flush the buffer
         current_time = time.time()
         if device_id not in last_flush_time:
             last_flush_time[device_id] = current_time
@@ -375,7 +342,6 @@ def on_message_telemetry(client, userdata, msg):
         if current_time - last_flush_time[device_id] >= FLUSH_INTERVAL_SECONDS:
             flush_telemetry_buffer(device_id)
         
-        # Update last telemetry time
         last_telemetry_time[device_id] = current_time
         
         print(f"\n[{device_id}] Received telemetry: HR={hr:.1f} bpm, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
@@ -390,11 +356,9 @@ def on_message_telemetry(client, userdata, msg):
         else:
             print(f"  [OK] Normal state")
         
-        # Log drowsiness event if not AWAKE
         if status_label != "AWAKE" and ride_id:
             log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon)
         
-        # Publish live analysis to mobile app topic
         live_analysis_topic = f"helmet/{device_id}/live-analysis"
         live_analysis_payload = {
             "device_id": device_id,
@@ -416,7 +380,6 @@ def on_message_telemetry(client, userdata, msg):
         client.publish(live_analysis_topic, json.dumps(live_analysis_payload), qos=1)
         print(f"[MQTT] Published live analysis to {live_analysis_topic}")
         
-        # Send command back to helmet
         cmd_topic = f"helmet/{device_id}/command"
         command_payload = {"vibrate": should_alert}
         client.publish(cmd_topic, json.dumps(command_payload), qos=1)
@@ -432,7 +395,6 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.subscribe(TOPIC_TELEMETRY)
     client.subscribe(TOPIC_BASELINE)
     
-    # Set up message callbacks using message filters
     client.message_callback_add("helmet/+/telemetry", on_message_telemetry)
     client.message_callback_add("helmet/+/baseline", on_message_baseline)
     
@@ -441,23 +403,8 @@ def on_connect(client, userdata, flags, reason_code, properties):
     print(f"  - {TOPIC_BASELINE}")
     print(f"\n[INFO] Telemetry buffering:")
     print(f"  - Flush interval: {FLUSH_INTERVAL_SECONDS}s ({FLUSH_INTERVAL_SECONDS/60:.0f} minutes)")
-    print(f"\n[INFO] Mobile App Live Stream:")
-    print(f"  - Publishing to: helmet/<deviceID>/live-analysis")
-    print(f"  - Includes: status (AWAKE/DROWSY/MICROSLEEP) + HRV metrics + location")
-    print(f"\n[INFO] Drowsiness Detection:")
-    print(f"  - SDNN: Overall HRV (weight: 3)")
-    print(f"  - RMSSD: Parasympathetic activity (weight: 3)")
-    print(f"  - pNN50: Beat-to-beat variation (weight: 2)")
-    print(f"  - LF/HF Ratio: Autonomic balance (weight: 2)")
-    print(f"  - SD1/SD2 Ratio: Poincare analysis (weight: 1)")
-    print(f"  - Status Labels:")
-    print(f"    * AWAKE: Score < 6")
-    print(f"    * DROWSY: Score 6-8")
-    print(f"    * MICROSLEEP: Score >= 9")
-    print(f"\n[INFO] General Baseline (fallback):")
-    print(f"  - SDNN: {GENERAL_BASELINE['sdnn']}, RMSSD: {GENERAL_BASELINE['rmssd']}, pNN50: {GENERAL_BASELINE['pnn50']}\n")
-
-
+   
+   
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.username_pw_set(MQTT_USER, MQTT_PASSWORD) 
 client.on_connect = on_connect
