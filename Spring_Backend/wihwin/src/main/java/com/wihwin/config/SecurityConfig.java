@@ -2,6 +2,7 @@ package com.wihwin.config;
 
 import com.wihwin.security.JwtAuthenticationFilter;
 import com.wihwin.security.JwtAuthenticationEntryPoint;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -26,6 +27,9 @@ public class SecurityConfig {
 
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @Value("${security.bcrypt.strength:10}")
+    private int bcryptStrength;
 
     public SecurityConfig(JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint, 
                          JwtAuthenticationFilter jwtAuthenticationFilter) {
@@ -71,7 +75,7 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(bcryptStrength);
     }
 
     @Bean
