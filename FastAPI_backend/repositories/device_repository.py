@@ -5,7 +5,6 @@ from uuid import UUID
 class DeviceRepository:
     @staticmethod
     def get_device_by_id(device_id: str) -> Optional[Dict]:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -17,7 +16,6 @@ class DeviceRepository:
     
     @staticmethod
     def create_device(device_id: str) -> UUID:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -28,7 +26,6 @@ class DeviceRepository:
     
     @staticmethod
     def mark_onboarded(device_uuid: UUID) -> None:
-       
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -38,7 +35,6 @@ class DeviceRepository:
     
     @staticmethod
     def update_last_seen(device_uuid: UUID) -> None:
-        
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute(

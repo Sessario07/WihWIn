@@ -10,14 +10,14 @@ class BaselineSample(BaseModel):
 
 class BaselineRequest(BaseModel):
     device_id: str
-    samples: Union[List[BaselineSample], List[List[int]]]  # Accept either format
-    sample_rate: Optional[int] = 50  # PPG sample rate if sending raw PPG
+    samples: Union[List[BaselineSample], List[List[int]]]
+    sample_rate: Optional[int] = 50
 
 class CrashAlert(BaseModel):
     device_id: str
     lat: float
     lon: float
-    severity: Optional[str] = "unknown"  
+    severity: Optional[str] = "unknown"
     accel_magnitude: Optional[float] = None
     accel_x: Optional[float] = None
     accel_y: Optional[float] = None

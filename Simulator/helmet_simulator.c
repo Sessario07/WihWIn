@@ -9,7 +9,8 @@
 #include <stdbool.h>
 
 
-#define ENV_LOCALHOST
+// #define ENV_LOCALHOST
+#define ENV_CLOUD
 
 
 #ifdef ENV_LOCALHOST
@@ -20,10 +21,10 @@
 #endif
 
 #ifdef ENV_CLOUD
-    #define MQTT_ADDRESS     "tcp://35.77.98.154:1883"
-    #define FASTAPI_BASE_URL "http://35.77.98.154/api/fast"
+    #define MQTT_ADDRESS     "tcp://13.158.7.42:1883"
+    #define FASTAPI_BASE_URL "http://13.158.7.42/api/fast"
     #define MQTT_USERNAME    "helmet"
-    #define MQTT_PASSWORD    "WihWin_Mqtt_2024!Secure"
+    #define MQTT_PASSWORD    "wihwin123"
 #endif
 
 

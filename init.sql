@@ -3,7 +3,6 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "cube";      
 CREATE EXTENSION IF NOT EXISTS "earthdistance";  
 
---acc
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -15,7 +14,6 @@ CREATE TABLE users (
     last_login TIMESTAMP
 );
 
---acc
 CREATE TABLE customer_profiles (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     blood_type VARCHAR(5),
@@ -29,7 +27,6 @@ CREATE TABLE customer_profiles (
     updated_at TIMESTAMP DEFAULT now()
 );
 
---acc
 CREATE TABLE doctor_profiles (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     hospital_name VARCHAR(200) NOT NULL,
@@ -41,7 +38,6 @@ CREATE TABLE doctor_profiles (
     created_at TIMESTAMP DEFAULT now()
 );
 
---acc
 CREATE TABLE devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID UNIQUE REFERENCES users(id) ON DELETE SET NULL,  
@@ -51,7 +47,7 @@ CREATE TABLE devices (
     battery_pct INT,
     created_at TIMESTAMP DEFAULT now()
 );
---acc
+
 CREATE TABLE baseline_metrics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
@@ -65,7 +61,7 @@ CREATE TABLE baseline_metrics (
     hr_decay_rate FLOAT,
     computed_at TIMESTAMP DEFAULT now()
 );
---acc
+
 CREATE TABLE rides (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
@@ -103,7 +99,6 @@ CREATE TABLE drowsiness_events (
     created_at TIMESTAMP DEFAULT now()
 );
 
---acc
 CREATE TABLE ride_summaries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ride_id UUID UNIQUE REFERENCES rides(id) ON DELETE CASCADE,
@@ -149,7 +144,6 @@ CREATE TABLE hourly_fatigue_heatmap (
     UNIQUE(user_id, date, hour_of_day)
 );
 
---acc
 CREATE TABLE raw_ppg_telemetry (
     id BIGSERIAL PRIMARY KEY,
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
@@ -168,7 +162,7 @@ CREATE TABLE raw_ppg_telemetry (
     lon FLOAT,
     created_at TIMESTAMP DEFAULT now()
 );
---acc
+
 CREATE TABLE hrv_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
@@ -183,7 +177,7 @@ CREATE TABLE hrv_sessions (
     microsleep_risk FLOAT,
     created_at TIMESTAMP DEFAULT now()
 );
---acc
+
 CREATE TABLE telemetry_log (
     id BIGSERIAL PRIMARY KEY,
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
@@ -198,7 +192,6 @@ CREATE TABLE telemetry_log (
     battery_pct INT
 );
 
---acc
 CREATE TABLE crash_alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE,

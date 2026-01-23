@@ -5,11 +5,9 @@ from models.response_models import DeviceCheckResponse, BaselineMetrics
 class DeviceService:
     @staticmethod
     def check_device(device_id: str) -> DeviceCheckResponse:
-        
         device = DeviceRepository.get_device_by_id(device_id)
         
         if not device:
-            
             device_uuid = DeviceRepository.create_device(device_id)
             return DeviceCheckResponse(
                 exists=False,
@@ -22,7 +20,6 @@ class DeviceService:
         device_uuid = device['id']
         onboarded = device['onboarded']
         
-      
         baseline_metrics = None
         if onboarded:
             baseline_data = BaselineRepository.get_latest_baseline(device_uuid)

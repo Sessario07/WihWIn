@@ -1,3 +1,5 @@
+x-ecr-registry: &ecr-registry "${ECR_REGISTRY}"
+
 services:
   nginx:
     image: nginx:alpine
@@ -19,13 +21,13 @@ services:
           memory: 8G
 
   fastapi:
-    build: ./FastAPI_backend
+    image: ${ECR_REGISTRY}/wihwin-fastapi:${IMAGE_TAG}
     container_name: fastapi_app
     expose:
       - "8000"
     environment:
-      DB_URL: ${DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-yesyes123}@db:5432/${POSTGRES_DB:-Wihwin}}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+      - DB_URL=${DB_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
     depends_on:
       db:
         condition: service_healthy
@@ -41,18 +43,18 @@ services:
           memory: 8G
 
   spring:
-    build: ./Spring_Backend/wihwin
+    image: ${ECR_REGISTRY}/wihwin-spring-backend:${IMAGE_TAG}
     container_name: spring_backend
     expose:
       - "8080"
     environment:
-      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/${POSTGRES_DB:-Wihwin}}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-yesyes123}
-      JWT_SECRET: ${JWT_SECRET:-wihwin-super-secret-key-change-this-in-production-at-least-512-bits-long}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
-      FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
-      BCRYPT_STRENGTH: ${BCRYPT_STRENGTH:-10}
+      - SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION}
+      - FASTAPI_URL=${FASTAPI_URL}
+      - BCRYPT_STRENGTH=${BCRYPT_STRENGTH}
     depends_on:
       - db
       - fastapi
@@ -66,14 +68,14 @@ services:
           memory: 8G
 
   worker:
-    build: ./Worker
+    image: ${ECR_REGISTRY}/wihwin-worker:${IMAGE_TAG}
     container_name: helmet_worker
     environment:
-      PYTHONUNBUFFERED: 1
-      FASTAPI_URL: ${FASTAPI_URL:-http://fastapi:8000}
-      MQTT_BROKER: ${MQTT_BROKER:-mqtt}
-      MQTT_USER: ${MQTT_USER:-helmet}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:-wihwin123}
+      - PYTHONUNBUFFERED=${PYTHONUNBUFFERED}
+      - FASTAPI_URL=${FASTAPI_URL}
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
     depends_on:
       - fastapi
       - mqtt
@@ -82,11 +84,11 @@ services:
     restart: unless-stopped
 
   ride-aggregator:
-    build: ./RideAggregator
+    image: ${ECR_REGISTRY}/wihwin-ride-aggregator:${IMAGE_TAG}
     container_name: ride_aggregator
     environment:
-      DB_URL: ${DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-yesyes123}@db:5432/${POSTGRES_DB:-Wihwin}}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+      - DB_URL=${DB_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
     depends_on:
       db:
         condition: service_healthy
@@ -103,16 +105,16 @@ services:
     expose:
       - "5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yesyes123}
-      POSTGRES_DB: ${POSTGRES_DB:-Wihwin}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - wihwin-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -122,10 +124,11 @@ services:
     container_name: mqtt_broker
     ports:
       - "1883:1883"
-      - "9001:9001"
+    expose:
+      - "9001"
     environment:
-      MQTT_USER: ${MQTT_USER:-helmet}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:-wihwin123}
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
       - ./mqtt-entrypoint.sh:/mqtt-entrypoint.sh:ro
@@ -135,16 +138,14 @@ services:
     restart: unless-stopped
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3-alpine
     container_name: rabbitmq
     hostname: rabbitmq
     expose:
       - "5672"
-    ports:
-      - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
@@ -159,8 +160,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
-    ports:
-      - "9090:9090"
+    expose:
+      - "9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -175,12 +176,13 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
-      GF_USERS_ALLOW_SIGN_UP: "false"
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -193,8 +195,8 @@ services:
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node_exporter
-    ports:
-      - "9100:9100"
+    expose:
+      - "9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -207,26 +209,6 @@ services:
     networks:
       - wihwin-network
     restart: unless-stopped
-
-  k6:
-    image: grafana/k6:latest
-    container_name: k6_loadtest
-    volumes:
-      - ./k6/scripts:/scripts:ro
-    networks:
-      - wihwin-network
-    depends_on:
-      - nginx
-      - spring
-      - fastapi
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 8G
-    profiles:
-      - testing
-    entrypoint: ["tail", "-f", "/dev/null"]
 
 networks:
   wihwin-network:

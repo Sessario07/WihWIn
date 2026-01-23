@@ -140,10 +140,9 @@ def get_or_create_active_ride(device_id):
         if response.status_code == 200:
             ride_id = response.json().get("ride_id")
             active_rides[device_id] = ride_id
-            print(f"[OK] Started new ride {ride_id} for device {device_id}")
             return ride_id
     except Exception as e:
-        print(f"[ERROR] Error starting ride: {e}")
+        print(f"Error starting ride: {e}")
     
     return None
 
@@ -167,7 +166,7 @@ def log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv
             timeout=5
         )
     except Exception as e:
-        print(f"[ERROR] Error logging drowsiness event: {e}")
+        print(f"Error logging drowsiness event: {e}")
 
 def flush_telemetry_buffer(device_id):
     if device_id not in telemetry_buffer or len(telemetry_buffer[device_id]) == 0:
@@ -190,14 +189,14 @@ def flush_telemetry_buffer(device_id):
         
         if response.status_code == 200:
             count = len(telemetry_buffer[device_id])
-            print(f"[BATCH] [OK] Flushed {count} telemetry records for {device_id} to database")
+            print(f"Flushed {count} telemetry records for {device_id}")
             telemetry_buffer[device_id].clear()
             last_flush_time[device_id] = time.time()
         else:
-            print(f"[BATCH] [ERROR] Failed to flush telemetry: {response.status_code}")
+            print(f"Failed to flush telemetry: {response.status_code}")
             
     except Exception as e:
-        print(f"[BATCH] [ERROR] Error flushing telemetry: {e}")
+        print(f"Error flushing telemetry: {e}")
 
 def end_ride_if_timeout(device_id):
     if device_id not in active_rides:
@@ -212,8 +211,7 @@ def end_ride_if_timeout(device_id):
     if time_since_last >= RIDE_TIMEOUT_SECONDS:
         ride_id = active_rides[device_id]
         
-        print(f"\n[RIDE] [TIMEOUT] Device {device_id} inactive for {int(time_since_last)}s")
-        print(f"[RIDE] [END] Auto-ending ride {ride_id} due to timeout...")
+        print(f"Device {device_id} inactive for {int(time_since_last)}s, auto-ending ride {ride_id}")
         
         try:
             flush_telemetry_buffer(device_id)
@@ -224,8 +222,6 @@ def end_ride_if_timeout(device_id):
             )
             
             if response.status_code == 200:
-                print(f"[OK] Ride {ride_id} ended successfully")
-                
                 del active_rides[device_id]
                 del last_telemetry_time[device_id]
                 if device_id in telemetry_buffer:
@@ -233,9 +229,9 @@ def end_ride_if_timeout(device_id):
                 if device_id in last_flush_time:
                     del last_flush_time[device_id]
             else:
-                print(f"[RIDE] [ERROR] Failed to end ride: HTTP {response.status_code}")
+                print(f"Failed to end ride: HTTP {response.status_code}")
         except Exception as e:
-            print(f"[RIDE] [ERROR] Error ending ride: {e}")
+            print(f"Error ending ride: {e}")
 
 def check_all_rides_timeout():
     devices_to_check = list(active_rides.keys())
@@ -258,11 +254,10 @@ def on_message_baseline(client, userdata, msg):
             "sd1_sd2_ratio": payload.get("sd1_sd2_ratio")
         }
         
-        print(f"\n[BASELINE] [OK] Cached baseline for device {device_id}")
-        print(f"  SDNN: {baseline_cache[device_id]['sdnn']:.2f}, RMSSD: {baseline_cache[device_id]['rmssd']:.2f}")
+        print(f"Cached baseline for device {device_id}")
         
     except Exception as e:
-        print(f"[BASELINE] [ERROR] Error processing baseline: {e}")
+        print(f"Error processing baseline: {e}")
         import traceback
         traceback.print_exc()
 
@@ -279,21 +274,15 @@ def on_message_telemetry(client, userdata, msg):
         lon = payload.get("lon")
         
         if not ppg_data:
-            print(f"[{device_id}] [WARN] No PPG data in payload, skipping...")
             return
         
         ride_id = get_or_create_active_ride(device_id)
         
         baseline = baseline_cache.get(device_id, GENERAL_BASELINE)
-        using_general = device_id not in baseline_cache
-        
-        if using_general:
-            print(f"[{device_id}] [WARN] Using general baseline (device not onboarded)")
         
         hrv_metrics = compute_hrv(ppg_data, sample_rate)
         
         if hrv_metrics is None:
-            print(f"[{device_id}] [ERROR] HRV computation failed, skipping...")
             return
         
         hrv_metrics = sanitize_metrics(hrv_metrics)
@@ -312,7 +301,6 @@ def on_message_telemetry(client, userdata, msg):
                 hr = baseline.get("mean_hr", 70.0)
                 ibi_ms = 60000.0 / hr
         except Exception as e:
-            print(f"[{device_id}] [WARN] HR extraction failed, using baseline: {e}")
             hr = baseline.get("mean_hr", 70.0)
             ibi_ms = 60000.0 / hr
         
@@ -344,17 +332,7 @@ def on_message_telemetry(client, userdata, msg):
         
         last_telemetry_time[device_id] = current_time
         
-        print(f"\n[{device_id}] Received telemetry: HR={hr:.1f} bpm, IBI={ibi_ms:.1f}ms (buffered: {len(telemetry_buffer[device_id])})")
-        print(f"[{device_id}] Drowsiness Score: {drowsiness_score}/11 | Status: {status_label}")
-        print(f"  Current - SDNN: {hrv_metrics['sdnn']:.2f}, RMSSD: {hrv_metrics['rmssd']:.2f}, pNN50: {hrv_metrics['pnn50']:.2f}")
-        print(f"  Baseline - SDNN: {baseline['sdnn']:.2f}, RMSSD: {baseline['rmssd']:.2f}, pNN50: {baseline['pnn50']:.2f}")
-        
-        if should_alert:
-            print(f"  [ALERT] {status_label} DETECTED:")
-            for alert in alerts:
-                print(f"     - {alert}")
-        else:
-            print(f"  [OK] Normal state")
+        print(f"[{device_id}] HR={hr:.1f} bpm | Score: {drowsiness_score}/11 | Status: {status_label}")
         
         if status_label != "AWAKE" and ride_id:
             log_drowsiness_event(device_id, ride_id, drowsiness_score, status_label, hrv_metrics, lat, lon)
@@ -378,14 +356,13 @@ def on_message_telemetry(client, userdata, msg):
             }
         }
         client.publish(live_analysis_topic, json.dumps(live_analysis_payload), qos=1)
-        print(f"[MQTT] Published live analysis to {live_analysis_topic}")
         
         cmd_topic = f"helmet/{device_id}/command"
         command_payload = {"vibrate": should_alert}
         client.publish(cmd_topic, json.dumps(command_payload), qos=1)
         
     except Exception as e:
-        print(f"[TELEMETRY] [ERROR] Error processing telemetry: {e}")
+        print(f"Error processing telemetry: {e}")
         import traceback
         traceback.print_exc()
 
@@ -398,11 +375,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.message_callback_add("helmet/+/telemetry", on_message_telemetry)
     client.message_callback_add("helmet/+/baseline", on_message_baseline)
     
-    print(f"\n[OK] Worker subscribed to:")
-    print(f"  - {TOPIC_TELEMETRY}")
-    print(f"  - {TOPIC_BASELINE}")
-    print(f"\n[INFO] Telemetry buffering:")
-    print(f"  - Flush interval: {FLUSH_INTERVAL_SECONDS}s ({FLUSH_INTERVAL_SECONDS/60:.0f} minutes)")
+    print(f"Subscribed to: {TOPIC_TELEMETRY}, {TOPIC_BASELINE}")
    
    
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -410,7 +383,23 @@ client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
 client.on_connect = on_connect
 
 print("Connecting to MQTT broker...")
-client.connect(MQTT_BROKER, MQTT_PORT, 60)
+
+MAX_RETRIES = 30
+RETRY_DELAY = 5
+
+for attempt in range(MAX_RETRIES):
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        print(f"Connected to MQTT broker at {MQTT_BROKER}:{MQTT_PORT}")
+        break
+    except Exception as e:
+        print(f"MQTT connection attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+        if attempt < MAX_RETRIES - 1:
+            print(f"Retrying in {RETRY_DELAY} seconds...")
+            time.sleep(RETRY_DELAY)
+        else:
+            print("Max retries reached. Exiting...")
+            raise SystemExit(1)
 
 while True:
     check_all_rides_timeout()

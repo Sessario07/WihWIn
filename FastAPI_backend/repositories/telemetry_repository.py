@@ -1,10 +1,23 @@
 from config.database import get_db_connection
-from typing import List, Dict
+from typing import List, Dict, Optional
 from uuid import UUID
+import uuid as uuid_module
 
-class TelemetryRepository:    
+#delete once finish testing
+def is_valid_uuid(val: str) -> bool:
+    if not val:
+        return False
+    try:
+        uuid_module.UUID(str(val))
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+class TelemetryRepository:
     @staticmethod
-    def save_telemetry_batch(device_uuid: UUID, ride_id: str, telemetry: List[dict]) -> int:
+    def save_telemetry_batch(device_uuid: UUID, ride_id: Optional[str], telemetry: List[dict]) -> int:
+        valid_ride_id = ride_id if ride_id and is_valid_uuid(ride_id) else None
+        
         with get_db_connection() as conn:
             cur = conn.cursor()
             insert_query = """
@@ -17,7 +30,7 @@ class TelemetryRepository:
             for entry in telemetry:
                 cur.execute(insert_query, (
                     device_uuid,
-                    ride_id,
+                    valid_ride_id,
                     entry.get('timestamp'),
                     entry.get('hr'),
                     entry.get('ibi_ms'),

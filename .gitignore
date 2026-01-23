@@ -27,3 +27,13 @@ venv/
 
 # RabbitMQ data
 rabbitmq_data/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/*.tfvars.example
+terraform/.terraform.lock.hcl
+terraform/crash.log
+terraform/*.tfplan

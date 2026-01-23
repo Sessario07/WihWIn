@@ -4,20 +4,10 @@ from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from typing import Generator
 
-
 DB_URL = os.getenv("DB_URL", "postgresql://postgres:yesyes123@localhost:5432/Wihwin")
 
 @contextmanager
 def get_db_connection() -> Generator:
-    """
-    Context manager for database connections.
-    Automatically commits on success, rolls back on error.
-    
-    Usage:
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM users")
-    """
     conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
     try:
         yield conn
@@ -29,7 +19,6 @@ def get_db_connection() -> Generator:
         conn.close()
 
 def test_connection() -> bool:
-    """Test database connection"""
     try:
         with get_db_connection() as conn:
             cur = conn.cursor()

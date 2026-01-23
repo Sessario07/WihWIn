@@ -25,7 +25,6 @@ def publish_ride_end(ride_id: str, end_time: datetime):
         properties=pika.BasicProperties(delivery_mode=2)
     )
     conn.close()
-    print(f"[RABBITMQ] [INFO] Published ride.end ride_id={ride_id} end_time={end_time.isoformat()}")
 
 class RideService:
     @staticmethod
@@ -45,8 +44,6 @@ class RideService:
             }
         
         ride_id = RideRepository.create_ride(device_uuid, user_id)
-        
-        print(f"[OK] Started ride {ride_id} for device {device_id}")
         
         return {
             "ride_id": str(ride_id),
@@ -79,7 +76,6 @@ class RideService:
         try:
             publish_ride_end(ride_id, end_time)
         except Exception as e:
-            print(f"[RABBITMQ] [ERROR] Failed to publish ride.end: {e}")
             raise HTTPException(status_code=500, detail="Failed to queue ride completion")
         
         return {
@@ -132,18 +128,17 @@ class RideService:
     @staticmethod
     def save_telemetry_batch(device_id: str, ride_id: str, telemetry: list) -> dict:
         device = DeviceRepository.get_device_by_id(device_id)
+        #delete once finish testing
         if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        device_uuid = device['id']
+            device_uuid = DeviceRepository.create_device(device_id)
+        else:
+            device_uuid = device['id']
         
         records_inserted = TelemetryRepository.save_telemetry_batch(
             device_uuid, ride_id, telemetry
         )
         
         DeviceRepository.update_last_seen(device_uuid)
-        
-        print(f"[OK] Stored {records_inserted} telemetry entries for device {device_id}")
         
         return {
             "success": True,

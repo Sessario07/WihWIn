@@ -25,10 +25,6 @@ class CrashService:
             notified_doctor_id = hospital['id']
             distance_km = hospital['distance_km']
             hospital_name = hospital['hospital_name']
-            print(f"Nearest hospital: {hospital_name} ({distance_km:.2f} km away)")
-            print(f"Crash severity: {severity.upper()}")
-            if accel_magnitude:
-                print(f"Impact force: {accel_magnitude:.2f}G")
       
         user_info = None
         if user_id:
@@ -46,8 +42,6 @@ class CrashService:
         crash_id = UserRepository.create_crash_alert(
             device_uuid, lat, lon, notified_doctor_id, distance_km
         )
-        
-        print(f"[OK] Crash alert logged for device {device_id} at ({lat}, {lon})")
         
         return {
             "success": True,
