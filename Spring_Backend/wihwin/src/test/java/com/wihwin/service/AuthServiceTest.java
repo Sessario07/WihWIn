@@ -4,6 +4,7 @@ import com.wihwin.dto.*;
 import com.wihwin.entity.User;
 import com.wihwin.repository.UserRepository;
 import com.wihwin.security.JwtTokenProvider;
+import com.wihwin.security.UserPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,8 +17,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,12 +39,16 @@ class AuthServiceTest {
     @Mock
     private JwtTokenProvider tokenProvider;
 
+    @Mock
+    private Executor bcryptExecutor;
+
     @InjectMocks
     private AuthService authService;
 
     private RegisterRequest registerRequest;
     private LoginRequest loginRequest;
     private User testUser;
+    private UserPrincipal testUserPrincipal;
 
     @BeforeEach
     void setUp() {
@@ -63,20 +68,23 @@ class AuthServiceTest {
         testUser.setEmail("test@example.com");
         testUser.setPasswordHash("hashedPassword");
         testUser.setRole("customer");
+
+        testUserPrincipal = new UserPrincipal(
+            testUser.getId(),
+            testUser.getUsername(),
+            testUser.getEmail(),
+            testUser.getPasswordHash(),
+            testUser.getRole()
+        );
     }
 
     @Test
     void register_Success_ReturnsAuthResponse() {
-        
         when(userRepository.existsByUsername("testuser")).thenReturn(false);
         when(userRepository.existsByEmail("test@example.com")).thenReturn(false);
         when(passwordEncoder.encode("password123")).thenReturn("hashedPassword");
         when(userRepository.save(any(User.class))).thenReturn(testUser);
-        
-        Authentication mockAuth = mock(Authentication.class);
-        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
-                .thenReturn(mockAuth);
-        when(tokenProvider.generateToken(mockAuth)).thenReturn("test-jwt-token");
+        when(tokenProvider.generateTokenForUser(any(String.class))).thenReturn("test-jwt-token");
         
         AuthResponse response = authService.register(registerRequest);
 
@@ -87,11 +95,11 @@ class AuthServiceTest {
         assertEquals("customer", response.getRole());
         
         verify(userRepository).save(any(User.class));
+        verify(tokenProvider).generateTokenForUser(any(String.class));
     }
 
     @Test
     void register_UsernameAlreadyExists_ThrowsException() {
-        
         when(userRepository.existsByUsername("testuser")).thenReturn(true);
 
         RuntimeException exception = assertThrows(RuntimeException.class, 
@@ -103,7 +111,6 @@ class AuthServiceTest {
 
     @Test
     void register_EmailAlreadyExists_ThrowsException() {
-        
         when(userRepository.existsByUsername("testuser")).thenReturn(false);
         when(userRepository.existsByEmail("test@example.com")).thenReturn(true);
 
@@ -116,13 +123,18 @@ class AuthServiceTest {
 
     @Test
     void login_Success_ReturnsAuthResponse() {
-        
         Authentication mockAuth = mock(Authentication.class);
+        when(mockAuth.getPrincipal()).thenReturn(testUserPrincipal);
+        
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(0);
+            task.run();
+            return null;
+        }).when(bcryptExecutor).execute(any(Runnable.class));
+        
         when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
                 .thenReturn(mockAuth);
         when(tokenProvider.generateToken(mockAuth)).thenReturn("test-jwt-token");
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(testUser));
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
 
         AuthResponse response = authService.login(loginRequest);
 
@@ -130,33 +142,24 @@ class AuthServiceTest {
         assertEquals("test-jwt-token", response.getToken());
         assertEquals("testuser", response.getUsername());
         assertEquals("test@example.com", response.getEmail());
+        assertEquals("customer", response.getRole());
         
-        verify(userRepository).save(any(User.class)); 
+        verify(authenticationManager).authenticate(any(UsernamePasswordAuthenticationToken.class));
+        verify(tokenProvider).generateToken(mockAuth);
     }
 
     @Test
     void login_InvalidCredentials_ThrowsException() {
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(0);
+            task.run();
+            return null;
+        }).when(bcryptExecutor).execute(any(Runnable.class));
         
         when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
                 .thenThrow(new BadCredentialsException("Invalid credentials"));
 
         assertThrows(BadCredentialsException.class, 
                 () -> authService.login(loginRequest));
-    }
-
-    @Test
-    void login_UserNotFound_ThrowsException() {
-        
-        Authentication mockAuth = mock(Authentication.class);
-        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
-                .thenReturn(mockAuth);
-        when(tokenProvider.generateToken(mockAuth)).thenReturn("test-jwt-token");
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.empty());
-
-        
-        RuntimeException exception = assertThrows(RuntimeException.class, 
-                () -> authService.login(loginRequest));
-        
-        assertEquals("User not found", exception.getMessage());
     }
 }
