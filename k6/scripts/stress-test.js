@@ -1,22 +1,7 @@
-/**
- * IMPROVED STRESS TEST - Push Beyond Normal Capacity
- * Duration: 1 minute 30 seconds
- * 
- * SETUP PHASE:
- * - Register 15 users before test
- * - Validate registration responses
- * - Store credentials for login tests
- * 
- * STRESS TEST PHASE:
- * - Spring Login: 250 RPS (peak) - using real credentials
- * - FastAPI Batch: 500 RPS (peak) - independent
- */
-
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 
-// Custom metrics
 const errorRate = new Rate('error_rate');
 const springLoginLatency = new Trend('spring_login_latency');
 const fastApiBatchLatency = new Trend('fastapi_batch_latency');
@@ -30,7 +15,6 @@ const REGISTRATION_COUNT = 15;
 
 export const options = {
     scenarios: {
-        // Scenario 1: Spring Boot Login - Stress (250 RPS peak)
         spring_login: {
             executor: 'ramping-arrival-rate',
             exec: 'testSpringLogin',
@@ -39,15 +23,14 @@ export const options = {
             preAllocatedVUs: 300,
             maxVUs: 600,
             stages: [
-                { duration: '20s', target: 100 },  // Ramp to 100 RPS
-                { duration: '20s', target: 200 },  // Ramp to 200 RPS
-                { duration: '20s', target: 250 },  // Push to 250 RPS (stress point)
-                { duration: '20s', target: 250 },  // Maintain stress
-                { duration: '10s', target: 0 },    // Recovery
+                { duration: '20s', target: 100 },
+                { duration: '20s', target: 200 },
+                { duration: '20s', target: 250 },
+                { duration: '20s', target: 250 },
+                { duration: '10s', target: 0 },
             ],
             startTime: '0s',
         },
-        // Scenario 2: FastAPI Batch Telemetry - Stress (500 RPS peak)
         fastapi_batch: {
             executor: 'ramping-arrival-rate',
             exec: 'testFastApiBatch',
@@ -56,24 +39,23 @@ export const options = {
             preAllocatedVUs: 600,
             maxVUs: 1200,
             stages: [
-                { duration: '20s', target: 200 },  // Ramp to 200 RPS
-                { duration: '20s', target: 400 },  // Ramp to 400 RPS
-                { duration: '20s', target: 500 },  // Push to 500 RPS (stress point)
-                { duration: '20s', target: 500 },  // Maintain stress
-                { duration: '10s', target: 0 },    // Recovery
+                { duration: '20s', target: 200 },
+                { duration: '20s', target: 400 },
+                { duration: '20s', target: 500 },
+                { duration: '20s', target: 500 },
+                { duration: '10s', target: 0 },
             ],
             startTime: '0s',
         },
     },
     thresholds: {
-        http_req_duration: ['p(95)<2000'],     // 95% under 2s (relaxed for stress)
-        error_rate: ['rate<0.20'],              // Allow up to 20% errors under stress
-        spring_login_latency: ['p(95)<1500'],   // Spring login P95 under 1.5s
-        fastapi_batch_latency: ['p(95)<1500'],  // FastAPI batch P95 under 1.5s
+        http_req_duration: ['p(95)<2000'],
+        error_rate: ['rate<0.20'],
+        spring_login_latency: ['p(95)<1500'],
+        fastapi_batch_latency: ['p(95)<1500'],
     },
 };
 
-// Generate random user credentials
 function generateUserCredentials(index) {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000);
@@ -85,7 +67,6 @@ function generateUserCredentials(index) {
     };
 }
 
-// Register a single user
 function registerUser(credentials) {
     const headers = { 'Content-Type': 'application/json' };
     const payload = JSON.stringify(credentials);
@@ -127,7 +108,6 @@ function registerUser(credentials) {
     return null;
 }
 
-// Setup phase - Register users before stress test
 export function setup() {
     console.log('\n' + '='.repeat(60));
     console.log('SETUP PHASE: Registering test users for STRESS test...');
@@ -162,7 +142,6 @@ export function setup() {
     return { users };
 }
 
-// Generate telemetry batch payload
 function generateTelemetryBatch() {
     const telemetry = [];
     for (let i = 0; i < 10; i++) {
@@ -184,7 +163,6 @@ function generateTelemetryBatch() {
     };
 }
 
-// Test function for Spring Login
 export function testSpringLogin(data) {
     if (!data.users || data.users.length === 0) {
         console.error('No registered users available for login test');
@@ -219,7 +197,6 @@ export function testSpringLogin(data) {
     }
 }
 
-// Test function for FastAPI Batch
 export function testFastApiBatch() {
     const headers = { 'Content-Type': 'application/json' };
     const batchPayload = JSON.stringify(generateTelemetryBatch());
@@ -244,7 +221,6 @@ export function testFastApiBatch() {
     }
 }
 
-// Summary handler
 export function handleSummary(data) {
     const metrics = data.metrics;
     

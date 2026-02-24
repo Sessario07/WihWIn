@@ -1,11 +1,3 @@
-/**
- * RUN ALL TESTS - Combined Test Runner
- * Runs all test types sequentially with summary
- * 
- * Usage: Set K6_TEST_TYPE environment variable
- * - load, stress, spike, soak, or all
- */
-
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
@@ -17,7 +9,6 @@ const fastApiLatency = new Trend('fastapi_batch_latency');
 const BASE_URL = 'http://nginx:80';
 const TEST_TYPE = __ENV.K6_TEST_TYPE || 'load';
 
-// Define scenarios based on test type
 const scenarios = {
     load: {
         executor: 'ramping-arrival-rate',
@@ -102,7 +93,6 @@ function generateTelemetryBatch() {
 export default function () {
     const headers = { 'Content-Type': 'application/json' };
 
-    // Spring Boot Login
     const loginPayload = JSON.stringify({
         username: `testuser${Math.floor(Math.random() * 100)}`,
         password: 'testpassword123',
@@ -119,7 +109,6 @@ export default function () {
         'Spring responded': (r) => r.status !== 0,
     }));
 
-    // FastAPI Batch
     const batchPayload = JSON.stringify(generateTelemetryBatch());
 
     const batchRes = http.post(

@@ -88,7 +88,6 @@ public class AuthService {
         
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
     
-        // Fire-and-forget: update last login asynchronously
         updateLastLoginAsync(principal.getUsername());
 
         return new AuthResponse(jwt, principal.getId(), principal.getUsername(), principal.getEmail(), principal.getRole());

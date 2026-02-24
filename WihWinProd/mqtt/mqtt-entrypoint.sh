@@ -7,4 +7,3 @@ mosquitto_passwd -b /mosquitto/config/password.txt "$MQTT_USER" "$MQTT_PASSWORD"
 
 # Start mosquitto
 exec mosquitto -c /mosquitto/config/mosquitto.conf
-  

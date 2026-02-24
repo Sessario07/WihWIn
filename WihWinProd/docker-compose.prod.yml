@@ -130,8 +130,8 @@ services:
       - MQTT_USER=${MQTT_USER}
       - MQTT_PASSWORD=${MQTT_PASSWORD}
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./mqtt-entrypoint.sh:/mqtt-entrypoint.sh:ro
+      - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mqtt/mqtt-entrypoint.sh:/mqtt-entrypoint.sh:ro
     entrypoint: ["/mqtt-entrypoint.sh"]
     networks:
       - wihwin-network

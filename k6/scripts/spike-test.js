@@ -1,22 +1,7 @@
-/**
- * IMPROVED SPIKE TEST - Immediate Traffic Spike
- * Duration: 1 minute 30 seconds
- * 
- * SETUP PHASE:
- * - Register 15 users before test
- * - Validate registration responses
- * - Store credentials for login tests
- * 
- * SPIKE TEST PHASE:
- * - Spring Login: 500 RPS (immediate spike) - using real credentials
- * - FastAPI Batch: 1000 RPS (immediate spike) - independent
- */
-
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 
-// Custom metrics
 const errorRate = new Rate('error_rate');
 const springLoginLatency = new Trend('spring_login_latency');
 const fastApiBatchLatency = new Trend('fastapi_batch_latency');
@@ -30,7 +15,6 @@ const REGISTRATION_COUNT = 15;
 
 export const options = {
     scenarios: {
-        // Scenario 1: Spring Boot Login - Spike (500 RPS immediate)
         spring_login: {
             executor: 'ramping-arrival-rate',
             exec: 'testSpringLogin',
@@ -39,14 +23,13 @@ export const options = {
             preAllocatedVUs: 600,
             maxVUs: 1200,
             stages: [
-                { duration: '5s', target: 500 },   // Immediate spike to 500 RPS
-                { duration: '60s', target: 500 },  // Maintain spike
-                { duration: '15s', target: 50 },   // Sudden drop
-                { duration: '10s', target: 10 },   // Recovery
+                { duration: '5s', target: 500 },
+                { duration: '60s', target: 500 },
+                { duration: '15s', target: 50 },
+                { duration: '10s', target: 10 },
             ],
             startTime: '0s',
         },
-        // Scenario 2: FastAPI Batch Telemetry - Spike (1000 RPS immediate)
         fastapi_batch: {
             executor: 'ramping-arrival-rate',
             exec: 'testFastApiBatch',
@@ -55,23 +38,22 @@ export const options = {
             preAllocatedVUs: 1200,
             maxVUs: 2400,
             stages: [
-                { duration: '5s', target: 1000 },  // Immediate spike to 1000 RPS
-                { duration: '60s', target: 1000 }, // Maintain spike
-                { duration: '15s', target: 100 },  // Sudden drop
-                { duration: '10s', target: 10 },   // Recovery
+                { duration: '5s', target: 1000 },
+                { duration: '60s', target: 1000 },
+                { duration: '15s', target: 100 },
+                { duration: '10s', target: 10 },
             ],
             startTime: '0s',
         },
     },
     thresholds: {
-        http_req_duration: ['p(95)<5000'],     // Relaxed: 95% under 5s
-        error_rate: ['rate<0.50'],              // Allow up to 50% errors during spike
-        spring_login_latency: ['p(95)<4000'],   // Spring login P95 under 4s
-        fastapi_batch_latency: ['p(95)<4000'],  // FastAPI batch P95 under 4s
+        http_req_duration: ['p(95)<5000'],
+        error_rate: ['rate<0.50'],
+        spring_login_latency: ['p(95)<4000'],
+        fastapi_batch_latency: ['p(95)<4000'],
     },
 };
 
-// Generate random user credentials
 function generateUserCredentials(index) {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000);
@@ -83,7 +65,6 @@ function generateUserCredentials(index) {
     };
 }
 
-// Register a single user
 function registerUser(credentials) {
     const headers = { 'Content-Type': 'application/json' };
     const payload = JSON.stringify(credentials);
@@ -125,7 +106,6 @@ function registerUser(credentials) {
     return null;
 }
 
-// Setup phase - Register users before spike test
 export function setup() {
     console.log('\n' + '='.repeat(60));
     console.log('SETUP PHASE: Registering test users for SPIKE test...');
@@ -160,7 +140,6 @@ export function setup() {
     return { users };
 }
 
-// Generate telemetry batch payload
 function generateTelemetryBatch() {
     const telemetry = [];
     for (let i = 0; i < 10; i++) {
@@ -182,7 +161,6 @@ function generateTelemetryBatch() {
     };
 }
 
-// Test function for Spring Login
 export function testSpringLogin(data) {
     if (!data.users || data.users.length === 0) {
         console.error('No registered users available for login test');
@@ -218,7 +196,6 @@ export function testSpringLogin(data) {
     }
 }
 
-// Test function for FastAPI Batch
 export function testFastApiBatch() {
     const headers = { 'Content-Type': 'application/json' };
     const batchPayload = JSON.stringify(generateTelemetryBatch());
@@ -244,7 +221,6 @@ export function testFastApiBatch() {
     }
 }
 
-// Summary handler
 export function handleSummary(data) {
     const metrics = data.metrics;
     

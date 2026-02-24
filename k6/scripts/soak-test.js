@@ -2,7 +2,6 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 
-
 const errorRate = new Rate('error_rate');
 const springLoginLatency = new Trend('spring_login_latency');
 const fastApiBatchLatency = new Trend('fastapi_batch_latency');
@@ -16,7 +15,6 @@ const REGISTRATION_COUNT = 15;
 
 export const options = {
     scenarios: {
-        // Scenario 1: Spring Boot Login - Soak (25 RPS sustained)
         spring_login: {
             executor: 'constant-arrival-rate',
             exec: 'testSpringLogin',
@@ -26,7 +24,6 @@ export const options = {
             preAllocatedVUs: 50,
             maxVUs: 150,
         },
-        // Scenario 2: FastAPI Batch Telemetry - Soak (50 RPS sustained)
         fastapi_batch: {
             executor: 'constant-arrival-rate',
             exec: 'testFastApiBatch',
@@ -38,14 +35,13 @@ export const options = {
         },
     },
     thresholds: {
-        http_req_duration: ['p(95)<1000'],     // 95% under 1s
-        error_rate: ['rate<0.02'],              // Error rate under 2%
-        spring_login_latency: ['p(95)<800'],    // Spring login P95 under 800ms
-        fastapi_batch_latency: ['p(95)<800'],   // FastAPI batch P95 under 800ms
+        http_req_duration: ['p(95)<1000'],
+        error_rate: ['rate<0.02'],
+        spring_login_latency: ['p(95)<800'],
+        fastapi_batch_latency: ['p(95)<800'],
     },
 };
 
-// Generate random user credentials
 function generateUserCredentials(index) {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000);
@@ -57,7 +53,6 @@ function generateUserCredentials(index) {
     };
 }
 
-// Register a single user
 function registerUser(credentials) {
     const headers = { 'Content-Type': 'application/json' };
     const payload = JSON.stringify(credentials);
@@ -99,7 +94,6 @@ function registerUser(credentials) {
     return null;
 }
 
-// Setup phase - Register users before soak test
 export function setup() {
     console.log('\n' + '='.repeat(60));
     console.log('SETUP PHASE: Registering test users for SOAK test...');
@@ -134,7 +128,6 @@ export function setup() {
     return { users };
 }
 
-// Generate telemetry batch payload
 function generateTelemetryBatch() {
     const telemetry = [];
     for (let i = 0; i < 10; i++) {
@@ -156,7 +149,6 @@ function generateTelemetryBatch() {
     };
 }
 
-// Test function for Spring Login
 export function testSpringLogin(data) {
     if (!data.users || data.users.length === 0) {
         console.error('No registered users available for login test');
@@ -191,7 +183,6 @@ export function testSpringLogin(data) {
     }
 }
 
-// Test function for FastAPI Batch
 export function testFastApiBatch() {
     const headers = { 'Content-Type': 'application/json' };
     const batchPayload = JSON.stringify(generateTelemetryBatch());
@@ -216,7 +207,6 @@ export function testFastApiBatch() {
     }
 }
 
-// Summary handler
 export function handleSummary(data) {
     const metrics = data.metrics;
     
