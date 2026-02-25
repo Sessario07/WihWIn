@@ -8,16 +8,16 @@ logger = logging.getLogger(__name__)
 
 class DeviceService:
     @staticmethod
-    def check_device(device_id: str) -> DeviceCheckResponse:
+    async def check_device(device_id: str) -> DeviceCheckResponse:
         try:
-            device = DeviceRepository.get_device_by_id(device_id)
+            device = await DeviceRepository.get_device_by_id(device_id)
         except Exception as e:
             logger.error(f"DB error looking up device {device_id}: {e}")
             raise HTTPException(status_code=500, detail="Internal server error while looking up device")
         
         if not device:
             try:
-                device_uuid = DeviceRepository.create_device(device_id)
+                device_uuid = await DeviceRepository.create_device(device_id)
             except Exception as e:
                 logger.error(f"DB error creating device {device_id}: {e}")
                 raise HTTPException(status_code=500, detail="Internal server error while creating device")
@@ -35,7 +35,7 @@ class DeviceService:
         baseline_metrics = None
         if onboarded:
             try:
-                baseline_data = BaselineRepository.get_latest_baseline(device_uuid)
+                baseline_data = await BaselineRepository.get_latest_baseline(device_uuid)
                 if baseline_data:
                     baseline_metrics = BaselineMetrics(**baseline_data)
             except Exception as e:

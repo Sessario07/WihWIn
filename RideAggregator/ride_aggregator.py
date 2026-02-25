@@ -1,6 +1,7 @@
 import os
 import json
-import pika
+import asyncio
+import aio_pika
 from datetime import datetime
 
 from repositories import RideAggregatorRepository
@@ -11,37 +12,37 @@ DB_URL = os.getenv("DB_URL", "postgresql://postgres:yesyes123@localhost:5432/Wih
 MAX_RETRIES = 3
 
 
-def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
+async def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
     print(f"Processing ride_id={ride_id}")
-    ride = RideAggregatorRepository.get_ride_by_id(ride_id)
+    ride = await RideAggregatorRepository.get_ride_by_id(ride_id)
     if not ride:
         print(f"[WARN] ride_id={ride_id} not found, discarding")
         return 'success'
-    
+
     if ride['status'] == 'completed':
         print(f"ride_id={ride_id} already completed")
         return 'success'
-    
+
     if ride['status'] != 'ending':
         print(f"[WARN] ride_id={ride_id} has invalid status={ride['status']}, discarding")
         return 'invalid_state'
-    
+
     if end_time_from_msg:
         end_time = end_time_from_msg
     elif ride['end_time']:
         end_time = ride['end_time']
     else:
         end_time = datetime.now()
-    
+
     start_time = ride['start_time']
     duration_seconds = int((end_time - start_time).total_seconds())
-    
-    stats = RideAggregatorRepository.get_ride_stats(ride_id)
+
+    stats = await RideAggregatorRepository.get_ride_stats(ride_id)
     avg_hr = float(stats['avg_hr']) if stats and stats['avg_hr'] else None
     max_hr = float(stats['max_hr']) if stats and stats['max_hr'] else None
     min_hr = float(stats['min_hr']) if stats and stats['min_hr'] else None
 
-    event_stats = RideAggregatorRepository.get_drowsiness_event_stats(ride_id)
+    event_stats = await RideAggregatorRepository.get_drowsiness_event_stats(ride_id)
     total_drowsiness = event_stats['total_drowsiness_events']
     total_microsleep = event_stats['total_microsleep_events']
     max_score = event_stats['max_drowsiness_score']
@@ -49,7 +50,7 @@ def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
 
     fatigue_score = min(100, int((total_drowsiness * 10) + (total_microsleep * 20)))
 
-    result = RideAggregatorRepository.complete_ride_with_summary(
+    result = await RideAggregatorRepository.complete_ride_with_summary(
         ride_id=ride_id,
         end_time=end_time,
         duration_seconds=duration_seconds,
@@ -62,7 +63,7 @@ def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
         max_score=max_score,
         avg_score=avg_score
     )
-    
+
     if result is True:
         print(f"[AGGREGATOR] [INFO] ride_id={ride_id} completed - duration={duration_seconds}s fatigue={fatigue_score}/100 avg_hr={avg_hr}")
         return 'success'
@@ -74,116 +75,113 @@ def process_ride(ride_id: str, end_time_from_msg: datetime = None) -> str:
         return 'error'
 
 
-def get_retry_count(properties) -> int:
-    if properties.headers and 'x-retry-count' in properties.headers:
-        return properties.headers['x-retry-count']
+def get_retry_count(message: aio_pika.IncomingMessage) -> int:
+    if message.headers and 'x-retry-count' in message.headers:
+        return message.headers['x-retry-count']
     return 0
 
 
-def on_message(ch, method, properties, body):
+async def on_message(message: aio_pika.IncomingMessage, channel: aio_pika.abc.AbstractChannel):
     ride_id = None
     try:
-        msg = json.loads(body)
+        msg = json.loads(message.body)
         ride_id = msg.get('ride_id')
         end_time_str = msg.get('end_time')
         end_time = datetime.fromisoformat(end_time_str) if end_time_str else None
-        
+
         if not ride_id:
             print("[AGGREGATOR] [ERROR] Message missing ride_id, discarding")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            await message.ack()
             return
-        
-        result = process_ride(ride_id, end_time)
-        
+
+        result = await process_ride(ride_id, end_time)
+
         if result == 'success':
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            await message.ack()
         elif result == 'invalid_state':
             print(f"[AGGREGATOR] [WARN] ride_id={ride_id} invalid state, acknowledging to prevent infinite loop")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            await message.ack()
         else:
-            retry_count = get_retry_count(properties)
+            retry_count = get_retry_count(message)
             if retry_count >= MAX_RETRIES:
                 print(f"[AGGREGATOR] [ERROR] ride_id={ride_id} max retries ({MAX_RETRIES}) exceeded, discarding")
-                ch.basic_ack(delivery_tag=method.delivery_tag)
+                await message.ack()
             else:
                 print(f"[AGGREGATOR] [WARN] ride_id={ride_id} requeuing (retry {retry_count + 1}/{MAX_RETRIES})")
-                new_headers = {'x-retry-count': retry_count + 1}
-                ch.basic_publish(
-                    exchange='',
-                    routing_key='ride.end',
-                    body=body,
-                    properties=pika.BasicProperties(
-                        delivery_mode=2,
-                        headers=new_headers
-                    )
+                await channel.default_exchange.publish(
+                    aio_pika.Message(
+                        body=message.body,
+                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                        headers={'x-retry-count': retry_count + 1}
+                    ),
+                    routing_key='ride.end'
                 )
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-            
+                await message.ack()
+
     except json.JSONDecodeError as e:
         print(f"[AGGREGATOR] [ERROR] Invalid JSON: {e}, discarding")
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        await message.ack()
     except Exception as e:
         print(f"[AGGREGATOR] [ERROR] ride_id={ride_id} processing failed: {e}")
-        retry_count = get_retry_count(properties)
+        retry_count = get_retry_count(message)
         if retry_count >= MAX_RETRIES:
             print(f"[AGGREGATOR] [ERROR] ride_id={ride_id} max retries exceeded after exception, discarding")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            await message.ack()
         else:
             print(f"[AGGREGATOR] [WARN] ride_id={ride_id} requeuing after exception (retry {retry_count + 1}/{MAX_RETRIES})")
-            new_headers = {'x-retry-count': retry_count + 1}
-            ch.basic_publish(
-                exchange='',
-                routing_key='ride.end',
-                body=body,
-                properties=pika.BasicProperties(
-                    delivery_mode=2,
-                    headers=new_headers
-                )
+            await channel.default_exchange.publish(
+                aio_pika.Message(
+                    body=message.body,
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                    headers={'x-retry-count': retry_count + 1}
+                ),
+                routing_key='ride.end'
             )
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            await message.ack()
 
 
-def main():
+async def main():
     print("[AGGREGATOR] [INFO] Starting Ride Aggregator Worker")
     print(f"[AGGREGATOR] [INFO] RabbitMQ: {RABBITMQ_URL}")
     print(f"[AGGREGATOR] [INFO] DB: {DB_URL[:50]}...")
     print(f"[AGGREGATOR] [INFO] Max retries: {MAX_RETRIES}")
-    
-    RideAggregatorRepository.init_pool(DB_URL)
-    
-    params = pika.URLParameters(RABBITMQ_URL)
+
+    await RideAggregatorRepository.init_pool(DB_URL)
+
     connection = None
-    
     for attempt in range(10):
         try:
-            connection = pika.BlockingConnection(params)
+            connection = await aio_pika.connect_robust(RABBITMQ_URL)
             break
-        except pika.exceptions.AMQPConnectionError as e:
+        except Exception as e:
             print(f"[AGGREGATOR] [WARN] Connection attempt {attempt + 1}/10 failed: {e}")
-            import time
-            time.sleep(5)
-    
+            await asyncio.sleep(5)
+
     if not connection:
         print("[AGGREGATOR] [ERROR] Failed to connect to RabbitMQ after 10 attempts")
         return
-    
-    channel = connection.channel()
-    channel.queue_declare(queue='ride.end', durable=True)
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue='ride.end', on_message_callback=on_message)
-    
+
+    channel = await connection.channel()
+    await channel.set_qos(prefetch_count=1)
+    queue = await channel.declare_queue('ride.end', durable=True)
+
     print("[AGGREGATOR] [INFO] Connected to RabbitMQ, consuming from queue=ride.end")
-    
+
+    async def message_handler(message: aio_pika.IncomingMessage):
+        await on_message(message, channel)
+
+    await queue.consume(message_handler)
+
     try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        print("\n[AGGREGATOR] [INFO] Shutting down...")
-        channel.stop_consuming()
+        await asyncio.Future()  # run forever
+    except asyncio.CancelledError:
+        pass
     finally:
-        connection.close()
-        RideAggregatorRepository.close_pool()
+        print("\n[AGGREGATOR] [INFO] Shutting down...")
+        await connection.close()
+        await RideAggregatorRepository.close_pool()
         print("[AGGREGATOR] [INFO] Shutdown complete")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

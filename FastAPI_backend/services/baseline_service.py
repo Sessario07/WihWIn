@@ -19,8 +19,9 @@ def safe_float(value, default=0.0):
 
 class BaselineService:
     @staticmethod
-    def compute_baseline(device_id: str, samples: list, sample_rate: int = 50) -> dict:
+    async def compute_baseline(device_id: str, samples: list, sample_rate: int = 50) -> dict:
         try:
+            # CPU-bound neurokit2 processing — stays sync (no I/O)
             hr_values = []
             sdnn_values = []
             rmssd_values = []
@@ -102,14 +103,15 @@ class BaselineService:
                 'hr_decay_rate': hr_decay_rate
             }
             
-            device = DeviceRepository.get_device_by_id(device_id)
+            # Async DB calls
+            device = await DeviceRepository.get_device_by_id(device_id)
             if not device:
                 raise HTTPException(status_code=404, detail="Device not found")
             
             device_uuid = device['id']
             
-            BaselineRepository.save_baseline(device_uuid, metrics)
-            DeviceRepository.mark_onboarded(device_uuid)
+            await BaselineRepository.save_baseline(device_uuid, metrics)
+            await DeviceRepository.mark_onboarded(device_uuid)
             
             return metrics
             

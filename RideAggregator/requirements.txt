@@ -1,2 +1,2 @@
-pika
-psycopg2-binary
+aio-pika
+asyncpg

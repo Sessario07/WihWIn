@@ -7,12 +7,12 @@ logger = logging.getLogger(__name__)
 
 class CrashService:
     @staticmethod
-    def handle_crash(device_id: str, lat: float, lon: float, 
-                     severity: str = "unknown", accel_magnitude: float = None,
-                     accel_x: float = None, accel_y: float = None, accel_z: float = None) -> dict:
+    async def handle_crash(device_id: str, lat: float, lon: float, 
+                           severity: str = "unknown", accel_magnitude: float = None,
+                           accel_x: float = None, accel_y: float = None, accel_z: float = None) -> dict:
        
         try:
-            device = DeviceRepository.get_device_by_id(device_id)
+            device = await DeviceRepository.get_device_by_id(device_id)
         except Exception as e:
             logger.error(f"DB error looking up device {device_id}: {e}")
             raise HTTPException(status_code=500, detail="Internal server error while looking up device")
@@ -24,7 +24,7 @@ class CrashService:
         user_id = device.get('user_id')
         
         try:
-            hospital = UserRepository.find_nearest_hospital(lat, lon)
+            hospital = await UserRepository.find_nearest_hospital(lat, lon)
         except Exception as e:
             logger.error(f"DB error finding nearest hospital: {e}")
             hospital = None
@@ -41,7 +41,7 @@ class CrashService:
         user_info = None
         if user_id:
             try:
-                user_data = UserRepository.get_user_info(user_id)
+                user_data = await UserRepository.get_user_info(user_id)
                 if user_data:
                     user_info = {
                         "username": user_data['username'],
@@ -55,7 +55,7 @@ class CrashService:
                 logger.error(f"DB error fetching user info for {user_id}: {e}")
         
         try:
-            crash_id = UserRepository.create_crash_alert(
+            crash_id = await UserRepository.create_crash_alert(
                 device_uuid, lat, lon, notified_doctor_id, distance_km
             )
         except Exception as e:

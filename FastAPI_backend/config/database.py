@@ -1,28 +1,36 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from contextlib import contextmanager
-from typing import Generator
+import asyncpg
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 DB_URL = os.getenv("DB_URL", "postgresql://postgres:yesyes123@localhost:5432/Wihwin")
 
-@contextmanager
-def get_db_connection() -> Generator:
-    conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
-    try:
-        yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
+pool: asyncpg.Pool = None
 
-def test_connection() -> bool:
+
+async def init_pool():
+    global pool
+    pool = await asyncpg.create_pool(
+        DB_URL, min_size=2, max_size=20
+    )
+
+
+async def close_pool():
+    global pool
+    if pool:
+        await pool.close()
+
+
+@asynccontextmanager
+async def get_db_connection() -> AsyncGenerator:
+    async with pool.acquire() as conn:
+        yield conn
+
+
+async def test_connection() -> bool:
     try:
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
+        async with get_db_connection() as conn:
+            await conn.fetchval("SELECT 1")
             return True
     except Exception as e:
         print(f"Database connection failed: {e}")

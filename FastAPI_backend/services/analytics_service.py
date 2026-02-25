@@ -8,22 +8,21 @@ logger = logging.getLogger(__name__)
 
 class AnalyticsService: 
     @staticmethod
-    def get_daily_hrv_trend(user_id: str, days: int = 30) -> dict:
+    async def get_daily_hrv_trend(user_id: str, days: int = 30) -> dict:
         try:
             days = max(1, int(days))
         except (ValueError, TypeError):
             days = 30
 
         try:
-            baseline_data = BaselineRepository.get_user_baseline(user_id)
+            baseline_data = await BaselineRepository.get_user_baseline(user_id)
             baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         except Exception:
             baseline_rmssd = 42.0
 
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("""
+            async with get_db_connection() as conn:
+                rows = await conn.fetch("""
                     SELECT 
                         DATE(r.start_time) as ride_date,
                         AVG(t.rmssd) as avg_rmssd,
@@ -31,14 +30,12 @@ class AnalyticsService:
                         MAX(t.rmssd) as max_rmssd
                     FROM rides r
                     JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
-                    WHERE r.user_id = %s 
-                        AND r.start_time >= CURRENT_DATE - make_interval(days := %s)
+                    WHERE r.user_id = $1 
+                        AND r.start_time >= CURRENT_DATE - make_interval(days => $2)
                         AND r.status = 'completed'
                     GROUP BY ride_date
                     ORDER BY ride_date ASC
-                """, (user_id, days))
-                
-                rows = cur.fetchall()
+                """, user_id, days)
         except Exception as e:
             logger.error(f"DB error in get_daily_hrv_trend for user {user_id}: {e}")
             return {
@@ -72,9 +69,9 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_weekly_fatigue_score(user_id: str) -> dict:
+    async def get_weekly_fatigue_score(user_id: str) -> dict:
         try:
-            baseline_data = BaselineRepository.get_user_baseline(user_id)
+            baseline_data = await BaselineRepository.get_user_baseline(user_id)
             baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         except Exception:
             baseline_rmssd = 42.0
@@ -83,22 +80,19 @@ class AnalyticsService:
         week_end = datetime.now().date()
 
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("""
+            async with get_db_connection() as conn:
+                rows = await conn.fetch("""
                     SELECT 
                         DATE(r.start_time) as ride_date,
                         AVG(t.rmssd) as avg_rmssd
                     FROM rides r
                     JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
-                    WHERE r.user_id = %s 
-                        AND r.start_time >= CURRENT_DATE - make_interval(days := 6)
+                    WHERE r.user_id = $1 
+                        AND r.start_time >= CURRENT_DATE - make_interval(days => 6)
                         AND r.status = 'completed'
                     GROUP BY ride_date
                     ORDER BY ride_date ASC
-                """, (user_id,))
-                
-                rows = cur.fetchall()
+                """, user_id)
         except Exception as e:
             logger.error(f"DB error in get_weekly_fatigue_score for user {user_id}: {e}")
             return {
@@ -143,22 +137,21 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_hrv_heatmap(user_id: str, days: int = 7) -> dict:
+    async def get_hrv_heatmap(user_id: str, days: int = 7) -> dict:
         try:
             days = max(1, int(days))
         except (ValueError, TypeError):
             days = 7
 
         try:
-            baseline_data = BaselineRepository.get_user_baseline(user_id)
+            baseline_data = await BaselineRepository.get_user_baseline(user_id)
             baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         except Exception:
             baseline_rmssd = 42.0
 
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("""
+            async with get_db_connection() as conn:
+                rows = await conn.fetch("""
                     SELECT 
                         DATE(t.timestamp) as date,
                         EXTRACT(HOUR FROM t.timestamp) as hour,
@@ -168,13 +161,11 @@ class AnalyticsService:
                     JOIN rides r ON r.id = t.ride_id
                     LEFT JOIN drowsiness_events de ON de.ride_id = r.id 
                         AND DATE_TRUNC('hour', de.detected_at) = DATE_TRUNC('hour', t.timestamp)
-                    WHERE r.user_id = %s 
-                        AND t.timestamp >= CURRENT_DATE - make_interval(days := %s)
+                    WHERE r.user_id = $1 
+                        AND t.timestamp >= CURRENT_DATE - make_interval(days => $2)
                     GROUP BY date, hour
                     ORDER BY date ASC, hour ASC
-                """, (user_id, days))
-                
-                rows = cur.fetchall()
+                """, user_id, days)
         except Exception as e:
             logger.error(f"DB error in get_hrv_heatmap for user {user_id}: {e}")
             return {
@@ -228,7 +219,7 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_lf_hf_trend(user_id: str, days: int = 30) -> dict:
+    async def get_lf_hf_trend(user_id: str, days: int = 30) -> dict:
         try:
             days = max(1, int(days))
         except (ValueError, TypeError):
@@ -237,9 +228,8 @@ class AnalyticsService:
         threshold = 2.5
         
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("""
+            async with get_db_connection() as conn:
+                rows = await conn.fetch("""
                     SELECT 
                         r.id,
                         r.start_time,
@@ -248,15 +238,13 @@ class AnalyticsService:
                         r.duration_seconds
                     FROM rides r
                     JOIN raw_ppg_telemetry t ON t.ride_id = r.id::text
-                    WHERE r.user_id = %s 
-                        AND r.start_time >= CURRENT_DATE - make_interval(days := %s)
+                    WHERE r.user_id = $1 
+                        AND r.start_time >= CURRENT_DATE - make_interval(days => $2)
                         AND r.status = 'completed'
                         AND t.lf_hf_ratio IS NOT NULL
                     GROUP BY r.id, r.start_time, r.duration_seconds
                     ORDER BY r.start_time ASC
-                """, (user_id, days))
-                
-                rows = cur.fetchall()
+                """, user_id, days)
         except Exception as e:
             logger.error(f"DB error in get_lf_hf_trend for user {user_id}: {e}")
             return {
@@ -290,38 +278,32 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_fatigue_patterns(user_id: str) -> dict:
+    async def get_fatigue_patterns(user_id: str) -> dict:
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                
-                cur.execute("""
+            async with get_db_connection() as conn:
+                hourly_rows = await conn.fetch("""
                     SELECT 
                         EXTRACT(HOUR FROM de.detected_at) as hour_of_day,
                         COUNT(*) as event_count,
                         AVG(de.severity_score) as avg_severity
                     FROM drowsiness_events de
                     JOIN rides r ON r.id = de.ride_id
-                    WHERE r.user_id = %s
+                    WHERE r.user_id = $1
                     GROUP BY hour_of_day
                     ORDER BY hour_of_day
-                """, (user_id,))
+                """, user_id)
                 
-                hourly_rows = cur.fetchall()
-                
-                cur.execute("""
+                daily_rows = await conn.fetch("""
                     SELECT 
                         EXTRACT(DOW FROM de.detected_at) as day_of_week,
                         COUNT(*) as event_count,
                         AVG(de.severity_score) as avg_severity
                     FROM drowsiness_events de
                     JOIN rides r ON r.id = de.ride_id
-                    WHERE r.user_id = %s
+                    WHERE r.user_id = $1
                     GROUP BY day_of_week
                     ORDER BY day_of_week
-                """, (user_id,))
-                
-                daily_rows = cur.fetchall()
+                """, user_id)
         except Exception as e:
             logger.error(f"DB error in get_fatigue_patterns for user {user_id}: {e}")
             return {

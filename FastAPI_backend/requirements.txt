@@ -1,8 +1,8 @@
 fastapi
 uvicorn[standard]
-psycopg2-binary
+asyncpg
 paho-mqtt
 requests
 neurokit2
 numpy
-pika
+aio-pika

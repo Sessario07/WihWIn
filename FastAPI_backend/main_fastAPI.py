@@ -1,25 +1,43 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from models.request_models import *
 from models.response_models import *
 from services.device_service import DeviceService
 from services.baseline_service import BaselineService
-from services.ride_service import RideService
+from services.ride_service import RideService, init_rabbitmq, close_rabbitmq
 from services.analytics_service import AnalyticsService
 from services.crash_service import CrashService
+from config.database import init_pool, close_pool, get_db_connection, test_connection
+from repositories.ride_repository import RideRepository
+from repositories.baseline_repository import BaselineRepository
 import logging
 
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_pool()
+    try:
+        await init_rabbitmq()
+    except Exception as e:
+        logger.warning(f"RabbitMQ not available at startup: {e}")
+    yield
+    await close_rabbitmq()
+    await close_pool()
+
+
 app = FastAPI(
     title="SmartHelmet FastAPI Backend",
     description="N-Tier architecture with Repository + Service patterns",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 @app.get("/device/check", response_model=DeviceCheckResponse)
-def check_device(device_id: str):
+async def check_device(device_id: str):
     try:
-        return DeviceService.check_device(device_id)
+        return await DeviceService.check_device(device_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -27,9 +45,9 @@ def check_device(device_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while checking device")
 
 @app.post("/baseline")
-def compute_baseline(request: BaselineRequest):
+async def compute_baseline(request: BaselineRequest):
     try:
-        metrics = BaselineService.compute_baseline(
+        metrics = await BaselineService.compute_baseline(
             request.device_id, 
             request.samples,
             request.sample_rate or 50
@@ -46,9 +64,9 @@ def compute_baseline(request: BaselineRequest):
         raise HTTPException(status_code=500, detail="Internal server error while computing baseline")
 
 @app.post("/crash")
-def crash_alert(alert: CrashAlert):
+async def crash_alert(alert: CrashAlert):
     try:
-        return CrashService.handle_crash(
+        return await CrashService.handle_crash(
             alert.device_id, 
             alert.lat, 
             alert.lon,
@@ -65,9 +83,9 @@ def crash_alert(alert: CrashAlert):
         raise HTTPException(status_code=500, detail="Internal server error while processing crash alert")
 
 @app.post("/rides/start")
-def start_ride(request: RideStart):
+async def start_ride(request: RideStart):
     try:
-        return RideService.start_ride(request.device_id)
+        return await RideService.start_ride(request.device_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -76,9 +94,9 @@ def start_ride(request: RideStart):
 
 
 @app.post("/rides/{ride_id}/end")
-def end_ride(ride_id: str):
+async def end_ride(ride_id: str):
     try:
-        return RideService.end_ride(ride_id)
+        return await RideService.end_ride(ride_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -87,9 +105,9 @@ def end_ride(ride_id: str):
 
 
 @app.get("/rides/{ride_id}/details", response_model=RideDetailsResponse)
-def get_ride_details(ride_id: str):
+async def get_ride_details(ride_id: str):
     try:
-        return RideService.get_ride_details(ride_id)
+        return await RideService.get_ride_details(ride_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -98,11 +116,9 @@ def get_ride_details(ride_id: str):
 
 
 @app.get("/rides/{ride_id}/analysis")
-def get_ride_analysis(ride_id: str):
+async def get_ride_analysis(ride_id: str):
     try:
-        from repositories.ride_repository import RideRepository
-        
-        ride = RideRepository.get_ride_by_id(ride_id)
+        ride = await RideRepository.get_ride_by_id(ride_id)
         if not ride:
             raise HTTPException(status_code=404, detail="Ride not found")
         
@@ -133,25 +149,19 @@ def get_ride_analysis(ride_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while fetching ride analysis")
 
 @app.get("/rides/{ride_id}/hr-timeline")
-def get_ride_hr_timeline(ride_id: str):
+async def get_ride_hr_timeline(ride_id: str):
     try:
-        from repositories.ride_repository import RideRepository
-        from config.database import get_db_connection
-        
-        ride = RideRepository.get_ride_by_id(ride_id)
+        ride = await RideRepository.get_ride_by_id(ride_id)
         if not ride:
             raise HTTPException(status_code=404, detail="Ride not found")
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch("""
                 SELECT timestamp, hr
                 FROM raw_ppg_telemetry
-                WHERE ride_id = %s AND hr IS NOT NULL
+                WHERE ride_id = $1 AND hr IS NOT NULL
                 ORDER BY timestamp ASC
-            """, (ride_id,))
-            
-            rows = cursor.fetchall()
+            """, ride_id)
         
         return {
             "ride_id": ride_id,
@@ -170,27 +180,21 @@ def get_ride_hr_timeline(ride_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while fetching HR timeline")
 
 @app.get("/rides/{ride_id}/hrv-timeline")
-def get_ride_hrv_timeline(ride_id: str):
+async def get_ride_hrv_timeline(ride_id: str):
     try:
-        from repositories.ride_repository import RideRepository
-        from config.database import get_db_connection
-        
-        ride = RideRepository.get_ride_by_id(ride_id)
+        ride = await RideRepository.get_ride_by_id(ride_id)
         if not ride:
             raise HTTPException(status_code=404, detail="Ride not found")
         
         baseline_rmssd = ride.get('baseline_rmssd', 45.0)
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch("""
                 SELECT timestamp, rmssd, sdnn, pnn50, lf_hf_ratio
                 FROM raw_ppg_telemetry
-                WHERE ride_id = %s AND rmssd IS NOT NULL
+                WHERE ride_id = $1 AND rmssd IS NOT NULL
                 ORDER BY timestamp ASC
-            """, (ride_id,))
-            
-            rows = cursor.fetchall()
+            """, ride_id)
         
         return {
             "ride_id": ride_id,
@@ -213,26 +217,20 @@ def get_ride_hrv_timeline(ride_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while fetching HRV timeline")
 
 @app.get("/rides/{ride_id}/events")
-def get_ride_events(ride_id: str):
+async def get_ride_events(ride_id: str):
     try:
-        from repositories.ride_repository import RideRepository
-        from config.database import get_db_connection
-        
-        ride = RideRepository.get_ride_by_id(ride_id)
+        ride = await RideRepository.get_ride_by_id(ride_id)
         if not ride:
             raise HTTPException(status_code=404, detail="Ride not found")
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch("""
                 SELECT detected_at, lat, lon, status, severity_score, 
                        hr_at_event, sdnn, rmssd, pnn50, lf_hf_ratio
                 FROM drowsiness_events
-                WHERE ride_id = %s
+                WHERE ride_id = $1
                 ORDER BY detected_at ASC
-            """, (ride_id,))
-            
-            rows = cursor.fetchall()
+            """, ride_id)
         
         return {
             "ride_id": ride_id,
@@ -262,25 +260,19 @@ def get_ride_events(ride_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while fetching ride events")
 
 @app.get("/rides/{ride_id}/route")
-def get_ride_route(ride_id: str):
+async def get_ride_route(ride_id: str):
     try:
-        from repositories.ride_repository import RideRepository
-        from config.database import get_db_connection
-        
-        ride = RideRepository.get_ride_by_id(ride_id)
+        ride = await RideRepository.get_ride_by_id(ride_id)
         if not ride:
             raise HTTPException(status_code=404, detail="Ride not found")
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch("""
                 SELECT timestamp, lat, lon
                 FROM raw_ppg_telemetry
-                WHERE ride_id = %s AND lat IS NOT NULL AND lon IS NOT NULL
+                WHERE ride_id = $1 AND lat IS NOT NULL AND lon IS NOT NULL
                 ORDER BY timestamp ASC
-            """, (ride_id,))
-            
-            rows = cursor.fetchall()
+            """, ride_id)
         
         return {
             "ride_id": ride_id,
@@ -300,9 +292,9 @@ def get_ride_route(ride_id: str):
         raise HTTPException(status_code=500, detail="Internal server error while fetching ride route")
 
 @app.post("/telemetry/batch")
-def batch_telemetry(batch: TelemetryBatch):
+async def batch_telemetry(batch: TelemetryBatch):
     try:
-        return RideService.save_telemetry_batch(batch.device_id, batch.ride_id, batch.telemetry)
+        return await RideService.save_telemetry_batch(batch.device_id, batch.ride_id, batch.telemetry)
     except HTTPException:
         raise
     except Exception as e:
@@ -311,9 +303,9 @@ def batch_telemetry(batch: TelemetryBatch):
 
 
 @app.post("/drowsiness-events")
-def log_drowsiness_event(event: DrowsinessEvent):
+async def log_drowsiness_event(event: DrowsinessEvent):
     try:
-        return RideService.log_drowsiness_event({
+        return await RideService.log_drowsiness_event({
             'device_id': event.device_id,
             'ride_id': event.ride_id,
             'severity_score': event.severity_score,
@@ -334,11 +326,9 @@ def log_drowsiness_event(event: DrowsinessEvent):
 
 
 @app.get("/users/{user_id}/baseline")
-def get_user_baseline(user_id: str):
+async def get_user_baseline(user_id: str):
     try:
-        from repositories.baseline_repository import BaselineRepository
-        
-        baseline = BaselineRepository.get_user_baseline_full(user_id)
+        baseline = await BaselineRepository.get_user_baseline_full(user_id)
         if not baseline:
             return {
                 "has_baseline": False,
@@ -362,11 +352,9 @@ def get_user_baseline(user_id: str):
 
 
 @app.delete("/users/{user_id}/baseline")
-def delete_user_baseline(user_id: str):
+async def delete_user_baseline(user_id: str):
     try:
-        from repositories.baseline_repository import BaselineRepository
-        
-        deleted = BaselineRepository.delete_user_baseline(user_id)
+        deleted = await BaselineRepository.delete_user_baseline(user_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="No baseline found for this user")
         
@@ -382,43 +370,40 @@ def delete_user_baseline(user_id: str):
 
 
 @app.get("/users/{user_id}/daily-hrv-trend")
-def get_daily_hrv_trend(user_id: str, days: int = 30):
-    return AnalyticsService.get_daily_hrv_trend(user_id, days)
+async def get_daily_hrv_trend(user_id: str, days: int = 30):
+    return await AnalyticsService.get_daily_hrv_trend(user_id, days)
 
 
 @app.get("/users/{user_id}/weekly-fatigue-score")
-def get_weekly_fatigue_score(user_id: str):
-    return AnalyticsService.get_weekly_fatigue_score(user_id)
+async def get_weekly_fatigue_score(user_id: str):
+    return await AnalyticsService.get_weekly_fatigue_score(user_id)
 
 
 @app.get("/users/{user_id}/hrv-heatmap")
-def get_hrv_heatmap(user_id: str, days: int = 7):
-    return AnalyticsService.get_hrv_heatmap(user_id, days)
+async def get_hrv_heatmap(user_id: str, days: int = 7):
+    return await AnalyticsService.get_hrv_heatmap(user_id, days)
 
 
 @app.get("/users/{user_id}/lf-hf-trend")
-def get_lf_hf_trend(user_id: str, days: int = 30):
-    return AnalyticsService.get_lf_hf_trend(user_id, days)
+async def get_lf_hf_trend(user_id: str, days: int = 30):
+    return await AnalyticsService.get_lf_hf_trend(user_id, days)
 
 
 @app.get("/users/{user_id}/fatigue-patterns")
-def get_fatigue_patterns(user_id: str):
-    return AnalyticsService.get_fatigue_patterns(user_id)
+async def get_fatigue_patterns(user_id: str):
+    return await AnalyticsService.get_fatigue_patterns(user_id)
 
 
 @app.get("/users/{user_id}/rides")
-def get_user_rides(user_id: str, page: int = 0, size: int = 20):
+async def get_user_rides(user_id: str, page: int = 0, size: int = 20):
     try:
-        from repositories.ride_repository import RideRepository
-        from repositories.baseline_repository import BaselineRepository
-        
         try:
-            baseline_data = BaselineRepository.get_user_baseline(user_id)
+            baseline_data = await BaselineRepository.get_user_baseline(user_id)
             baseline_rmssd = baseline_data['rmssd'] if baseline_data else 42.0
         except Exception:
             baseline_rmssd = 42.0
         
-        rides, total = RideRepository.get_user_rides(user_id, size, page * size)
+        rides, total = await RideRepository.get_user_rides(user_id, size, page * size)
         
         ride_summaries = []
         ride_number = total - (page * size)
@@ -431,9 +416,9 @@ def get_user_rides(user_id: str, page: int = 0, size: int = 20):
             alert_count = ride['total_drowsiness_events'] or 0
             microsleep_count = ride['total_microsleep_events'] or 0
             
-            if microsleep_count > 0:
+            if (microsleep_count > 0):
                 status_icon = "Bad"
-            elif alert_count > 2:
+            elif (alert_count > 2):
                 status_icon = "Warning"
             else:
                 status_icon = "Good"
@@ -472,16 +457,14 @@ def get_user_rides(user_id: str, page: int = 0, size: int = 20):
 
 
 @app.get("/health")
-def health_check():
-    from config.database import test_connection
-    
-    db_healthy = test_connection()
+async def health_check():
+    db_healthy = await test_connection()
     
     return {
         "status": "healthy" if db_healthy else "unhealthy",
         "database": "connected" if db_healthy else "disconnected",
         "version": "2.0.0",
-        "architecture": "N-Tier (Repository + Service)"
+        "architecture": "N-Tier (Repository + Service) - Async"
     }
 
 
