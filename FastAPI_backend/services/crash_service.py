@@ -1,6 +1,9 @@
 from fastapi import HTTPException
 from repositories.device_repository import DeviceRepository
 from repositories.user_repository import UserRepository
+import logging
+
+logger = logging.getLogger(__name__)
 
 class CrashService:
     @staticmethod
@@ -8,14 +11,23 @@ class CrashService:
                      severity: str = "unknown", accel_magnitude: float = None,
                      accel_x: float = None, accel_y: float = None, accel_z: float = None) -> dict:
        
-        device = DeviceRepository.get_device_by_id(device_id)
+        try:
+            device = DeviceRepository.get_device_by_id(device_id)
+        except Exception as e:
+            logger.error(f"DB error looking up device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while looking up device")
+
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
         
         device_uuid = device['id']
         user_id = device.get('user_id')
         
-        hospital = UserRepository.find_nearest_hospital(lat, lon)
+        try:
+            hospital = UserRepository.find_nearest_hospital(lat, lon)
+        except Exception as e:
+            logger.error(f"DB error finding nearest hospital: {e}")
+            hospital = None
         
         notified_doctor_id = None
         distance_km = None
@@ -28,20 +40,27 @@ class CrashService:
       
         user_info = None
         if user_id:
-            user_data = UserRepository.get_user_info(user_id)
-            if user_data:
-                user_info = {
-                    "username": user_data['username'],
-                    "email": user_data['email'],
-                    "blood_type": user_data['blood_type'],
-                    "allergies": user_data['allergies'],
-                    "emergency_contact_name": user_data['emergency_contact_name'],
-                    "emergency_contact_phone": user_data['emergency_contact_phone']
-                }
+            try:
+                user_data = UserRepository.get_user_info(user_id)
+                if user_data:
+                    user_info = {
+                        "username": user_data['username'],
+                        "email": user_data['email'],
+                        "blood_type": user_data.get('blood_type'),
+                        "allergies": user_data.get('allergies'),
+                        "emergency_contact_name": user_data.get('emergency_contact_name'),
+                        "emergency_contact_phone": user_data.get('emergency_contact_phone')
+                    }
+            except Exception as e:
+                logger.error(f"DB error fetching user info for {user_id}: {e}")
         
-        crash_id = UserRepository.create_crash_alert(
-            device_uuid, lat, lon, notified_doctor_id, distance_km
-        )
+        try:
+            crash_id = UserRepository.create_crash_alert(
+                device_uuid, lat, lon, notified_doctor_id, distance_km
+            )
+        except Exception as e:
+            logger.error(f"DB error creating crash alert for device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while creating crash alert")
         
         return {
             "success": True,

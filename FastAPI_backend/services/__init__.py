@@ -4,5 +4,3 @@ from .baseline_service import BaselineService
 from .ride_service import RideService
 from .analytics_service import AnalyticsService
 from .crash_service import CrashService
-
-#oh its the moment of truth now boi

@@ -120,13 +120,13 @@ jobs:
             echo "has_aws=true" >> $GITHUB_OUTPUT
           else
             echo "has_aws=false" >> $GITHUB_OUTPUT
-            echo "⚠️ AWS_ACCESS_KEY_ID not set — skipping ECR push"
+            echo "AWS_ACCESS_KEY_ID not set -- skipping ECR push"
           fi
           if [ -n "${{ secrets.EC2_HOST }}" ]; then
             echo "has_ec2=true" >> $GITHUB_OUTPUT
           else
             echo "has_ec2=false" >> $GITHUB_OUTPUT
-            echo "⚠️ EC2_HOST not set — skipping deploy"
+            echo "EC2_HOST not set -- skipping deploy"
           fi
 
   build-and-push:

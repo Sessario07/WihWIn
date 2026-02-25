@@ -4,6 +4,9 @@ import math
 from fastapi import HTTPException
 from repositories.device_repository import DeviceRepository
 from repositories.baseline_repository import BaselineRepository
+import logging
+
+logger = logging.getLogger(__name__)
 
 def safe_float(value, default=0.0):
     try:
@@ -110,7 +113,8 @@ class BaselineService:
             
             return metrics
             
+        except HTTPException:
+            raise
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error computing baseline for device {device_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Error computing baseline: {str(e)}")

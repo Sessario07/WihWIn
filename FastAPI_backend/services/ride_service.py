@@ -7,43 +7,65 @@ from repositories.device_repository import DeviceRepository
 from repositories.ride_repository import RideRepository
 from repositories.telemetry_repository import TelemetryRepository
 from models.response_models import RideDetailsResponse, RideEvent, HeartRateMetrics, HRVMetrics
+import logging
+
+logger = logging.getLogger(__name__)
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 def publish_ride_end(ride_id: str, end_time: datetime):
-    params = pika.URLParameters(RABBITMQ_URL)
-    conn = pika.BlockingConnection(params)
-    ch = conn.channel()
-    ch.queue_declare(queue="ride.end", durable=True)
-    ch.basic_publish(
-        exchange="",
-        routing_key="ride.end",
-        body=json.dumps({
-            "ride_id": str(ride_id),
-            "end_time": end_time.isoformat()
-        }),
-        properties=pika.BasicProperties(delivery_mode=2)
-    )
-    conn.close()
+    conn = None
+    try:
+        params = pika.URLParameters(RABBITMQ_URL)
+        conn = pika.BlockingConnection(params)
+        ch = conn.channel()
+        ch.queue_declare(queue="ride.end", durable=True)
+        ch.basic_publish(
+            exchange="",
+            routing_key="ride.end",
+            body=json.dumps({
+                "ride_id": str(ride_id),
+                "end_time": end_time.isoformat()
+            }),
+            properties=pika.BasicProperties(delivery_mode=2)
+        )
+    except Exception as e:
+        logger.error(f"Failed to publish ride end for {ride_id}: {e}")
+        raise
+    finally:
+        if conn and not conn.is_closed:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 class RideService:
     @staticmethod
     def start_ride(device_id: str) -> dict:
-        device = DeviceRepository.get_device_by_id(device_id)
+        try:
+            device = DeviceRepository.get_device_by_id(device_id)
+        except Exception as e:
+            logger.error(f"DB error looking up device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while looking up device")
+
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
         
         device_uuid = device['id']
         user_id = device.get('user_id')
         
-        existing_ride = RideRepository.get_active_ride(device_uuid)
-        if existing_ride:
-            return {
-                "ride_id": str(existing_ride['id']),
-                "message": "Ride already active"
-            }
-        
-        ride_id = RideRepository.create_ride(device_uuid, user_id)
+        try:
+            existing_ride = RideRepository.get_active_ride(device_uuid)
+            if existing_ride:
+                return {
+                    "ride_id": str(existing_ride['id']),
+                    "message": "Ride already active"
+                }
+            
+            ride_id = RideRepository.create_ride(device_uuid, user_id)
+        except Exception as e:
+            logger.error(f"DB error managing ride for device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while starting ride")
         
         return {
             "ride_id": str(ride_id),
@@ -54,9 +76,19 @@ class RideService:
     def end_ride(ride_id: str) -> dict:
         end_time = datetime.now()
         
-        marked = RideRepository.mark_ride_ending(ride_id)
+        try:
+            marked = RideRepository.mark_ride_ending(ride_id)
+        except Exception as e:
+            logger.error(f"DB error marking ride {ride_id} as ending: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while ending ride")
+
         if not marked:
-            ride = RideRepository.get_ride_by_id(ride_id)
+            try:
+                ride = RideRepository.get_ride_by_id(ride_id)
+            except Exception as e:
+                logger.error(f"DB error looking up ride {ride_id}: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error while looking up ride")
+
             if not ride:
                 raise HTTPException(status_code=404, detail="Ride not found")
             if ride['status'] == 'ending':
@@ -76,6 +108,7 @@ class RideService:
         try:
             publish_ride_end(ride_id, end_time)
         except Exception as e:
+            logger.error(f"Failed to queue ride end for {ride_id}: {e}")
             raise HTTPException(status_code=500, detail="Failed to queue ride completion")
         
         return {
@@ -86,12 +119,20 @@ class RideService:
     
     @staticmethod
     def get_ride_details(ride_id: str) -> RideDetailsResponse:
-        ride_data = RideRepository.get_ride_by_id(ride_id)
+        try:
+            ride_data = RideRepository.get_ride_by_id(ride_id)
+        except Exception as e:
+            logger.error(f"DB error fetching ride {ride_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while fetching ride")
         
         if not ride_data:
             raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
         
-        events_data = RideRepository.get_ride_events(ride_id)
+        try:
+            events_data = RideRepository.get_ride_events(ride_id)
+        except Exception as e:
+            logger.error(f"DB error fetching events for ride {ride_id}: {e}")
+            events_data = []
         
         events = [
             RideEvent(
@@ -127,18 +168,29 @@ class RideService:
     
     @staticmethod
     def save_telemetry_batch(device_id: str, ride_id: str, telemetry: list) -> dict:
-        device = DeviceRepository.get_device_by_id(device_id)
-        #delete once finish testing
-        if not device:
-            device_uuid = DeviceRepository.create_device(device_id)
-        else:
-            device_uuid = device['id']
-        
-        records_inserted = TelemetryRepository.save_telemetry_batch(
-            device_uuid, ride_id, telemetry
-        )
-        
-        DeviceRepository.update_last_seen(device_uuid)
+        try:
+            device = DeviceRepository.get_device_by_id(device_id)
+            #delete once finish testing
+            if not device:
+                device_uuid = DeviceRepository.create_device(device_id)
+            else:
+                device_uuid = device['id']
+        except Exception as e:
+            logger.error(f"DB error looking up/creating device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while processing device")
+
+        try:
+            records_inserted = TelemetryRepository.save_telemetry_batch(
+                device_uuid, ride_id, telemetry
+            )
+        except Exception as e:
+            logger.error(f"DB error saving telemetry batch for {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while saving telemetry")
+
+        try:
+            DeviceRepository.update_last_seen(device_uuid)
+        except Exception as e:
+            logger.warning(f"Failed to update last_seen for device {device_id}: {e}")
         
         return {
             "success": True,
@@ -148,17 +200,26 @@ class RideService:
     
     @staticmethod
     def log_drowsiness_event(event_data: dict) -> dict:
-        device = DeviceRepository.get_device_by_id(event_data['device_id'])
+        try:
+            device = DeviceRepository.get_device_by_id(event_data['device_id'])
+        except Exception as e:
+            logger.error(f"DB error looking up device {event_data['device_id']}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while looking up device")
+
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
         
         device_uuid = device['id']
         
-        event_id = TelemetryRepository.save_drowsiness_event(
-            event_data['ride_id'], 
-            device_uuid, 
-            event_data
-        )
+        try:
+            event_id = TelemetryRepository.save_drowsiness_event(
+                event_data['ride_id'], 
+                device_uuid, 
+                event_data
+            )
+        except Exception as e:
+            logger.error(f"DB error saving drowsiness event: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while logging drowsiness event")
         
         return {
             "success": True,

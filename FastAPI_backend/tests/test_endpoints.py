@@ -270,5 +270,5 @@ class TestBaselineEndpoint:
             "sample_rate": 50
         })
         
-        assert response.status_code == 500
+        assert response.status_code == 404
         assert "Device not found" in response.json()["detail"]

@@ -1,14 +1,26 @@
 from repositories.device_repository import DeviceRepository
 from repositories.baseline_repository import BaselineRepository
 from models.response_models import DeviceCheckResponse, BaselineMetrics
+from fastapi import HTTPException
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DeviceService:
     @staticmethod
     def check_device(device_id: str) -> DeviceCheckResponse:
-        device = DeviceRepository.get_device_by_id(device_id)
+        try:
+            device = DeviceRepository.get_device_by_id(device_id)
+        except Exception as e:
+            logger.error(f"DB error looking up device {device_id}: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error while looking up device")
         
         if not device:
-            device_uuid = DeviceRepository.create_device(device_id)
+            try:
+                device_uuid = DeviceRepository.create_device(device_id)
+            except Exception as e:
+                logger.error(f"DB error creating device {device_id}: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error while creating device")
             return DeviceCheckResponse(
                 exists=False,
                 onboarded=False,
@@ -22,9 +34,12 @@ class DeviceService:
         
         baseline_metrics = None
         if onboarded:
-            baseline_data = BaselineRepository.get_latest_baseline(device_uuid)
-            if baseline_data:
-                baseline_metrics = BaselineMetrics(**baseline_data)
+            try:
+                baseline_data = BaselineRepository.get_latest_baseline(device_uuid)
+                if baseline_data:
+                    baseline_metrics = BaselineMetrics(**baseline_data)
+            except Exception as e:
+                logger.error(f"DB error fetching baseline for device {device_id}: {e}")
         
         return DeviceCheckResponse(
             exists=True,

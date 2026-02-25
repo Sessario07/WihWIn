@@ -125,7 +125,7 @@ export function setup() {
         if (registeredUser) {
             users.push(registeredUser);
             successCount++;
-            console.log(`✓ Successfully registered: ${registeredUser.username}`);
+            console.log(`Successfully registered: ${registeredUser.username}`);
         }
         
         sleep(0.5);

@@ -96,9 +96,9 @@ docker compose --profile testing up -d k6
 # Verify connectivity
 echo -e "${BLUE}Verifying k6 can reach nginx...${NC}"
 if docker compose exec -T k6 wget -q -O- http://nginx:80/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ k6 can reach nginx successfully${NC}"
+    echo -e "${GREEN}k6 can reach nginx successfully${NC}"
 else
-    echo -e "${YELLOW}⚠ Waiting for nginx to be ready...${NC}"
+    echo -e "${YELLOW}Waiting for nginx to be ready...${NC}"
     sleep 10
 fi
 
