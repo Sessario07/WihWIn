@@ -75,9 +75,8 @@ set -e
 
 cd /opt/${project_name}/app/WihWinProd
 source .env
-export ECR_REGISTRY IMAGE_TAG AWS_REGION
+export ECR_REGISTRY IMAGE_TAG
 
-aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 docker image prune -f

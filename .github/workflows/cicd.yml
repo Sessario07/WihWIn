@@ -252,7 +252,18 @@ jobs:
             echo "IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}" >> .env
             
             source .env
-            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+            
+            # Ensure Docker credential helper config is correct (no manual docker login needed)
+            mkdir -p ~/.docker
+            cat > ~/.docker/config.json <<EOF
+            {
+              "credHelpers": {
+                "${ECR_REGISTRY}": "ecr-login"
+              }
+            }
+            EOF
+            
+            export ECR_REGISTRY IMAGE_TAG
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker image prune -f
