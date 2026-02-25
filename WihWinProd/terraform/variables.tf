@@ -11,7 +11,7 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment name (e.g., dev, staging, prod)"
+  description = "prod"
   type        = string
   default     = "prod"
 }
@@ -45,14 +45,14 @@ variable "budget_alert_email" {
   type        = string
 }
 
-variable "infra_repo_url" {
-  description = "GitHub URL for the WihWinProd infrastructure repository"
+variable "github_repo_url" {
+  description = "GitHub repository URL"
   type        = string
   default     = ""
 }
 
-variable "infra_repo_branch" {
-  description = "Branch to clone from the infra repository"
+variable "github_branch" {
+  description = "Branch to clone"
   type        = string
   default     = "main"
 }

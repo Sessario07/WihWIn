@@ -16,8 +16,8 @@ resource "aws_instance" "wihwin" {
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     aws_region    = var.aws_region
     account_id    = data.aws_caller_identity.current.account_id
-    infra_repo    = var.infra_repo_url
-    infra_branch  = var.infra_repo_branch
+    github_repo   = var.github_repo_url
+    github_branch = var.github_branch
     project_name  = var.project_name
   }))
 

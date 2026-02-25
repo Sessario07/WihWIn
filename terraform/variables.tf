@@ -29,7 +29,7 @@ variable "ssh_allowed_cidr" {
 }
 
 variable "key_pair_name" {
-  description = "Name of existing EC2 key pair for SSH access"
+  description = "WihWin Key"
   type        = string
 }
 
